@@ -1,0 +1,25 @@
+from_latest_tag = true
+skip_untracked = false
+tag_prefix = "v"
+
+pre_bump_hooks = [
+  "cargo fmt --check",
+  "cargo clippy -- -D warnings",
+  "cargo test",
+  "cargo set-version {{version}}",
+]
+
+post_bump_hooks = [
+  "git push",
+  "git push origin v{{version}}",
+]
+
+[changelog]
+path = "CHANGELOG.md"
+template = "remote"
+remote = "github.com"
+repository = "lets"
+owner = "rapidity-rs"
+authors = [
+  { signature = "Taylor Faucett", username = "taylorFaucett" },
+]
