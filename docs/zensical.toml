@@ -1,0 +1,50 @@
+[project]
+site_name = "lets"
+site_description = "A declarative CLI builder — define commands in KDL, get a production-quality CLI instantly."
+site_author = "rapidity-rs"
+site_url = "https://rapidity-rs.github.io/lets/"
+copyright = "Copyright &copy; 2026 rapidity-rs"
+
+nav = [
+  { "Home" = "index.md" },
+  { "Getting Started" = "getting-started.md" },
+  { "KDL Primer" = "kdl-primer.md" },
+  { "Commands" = "commands.md" },
+  { "Arguments & Flags" = "arguments-and-flags.md" },
+  { "Orchestration" = "orchestration.md" },
+  { "Environment & Platform" = "environment.md" },
+  { "Interactive" = "interactive.md" },
+  { "Advanced" = "advanced.md" },
+  { "Shell Integration" = "shell-integration.md" },
+  { "Reference" = "reference.md" },
+]
+
+[project.theme]
+language = "en"
+features = [
+    "content.code.copy",
+    "content.code.annotate",
+    "navigation.footer",
+    "navigation.indexes",
+    "navigation.instant",
+    "navigation.instant.prefetch",
+    "navigation.path",
+    "navigation.sections",
+    "navigation.top",
+    "navigation.tracking",
+    "search.highlight",
+]
+
+[[project.theme.palette]]
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/rapidity-rs/lets"

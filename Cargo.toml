@@ -1,0 +1,28 @@
+[package]
+name = "lets-cli"
+version = "0.1.0"
+edition = "2024"
+description = "A declarative CLI builder — define commands in KDL, get a production-quality CLI instantly"
+license = "MIT"
+repository = "https://github.com/rapidity-rs/lets"
+keywords = ["cli", "kdl", "task-runner", "commands"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "lets"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.6", features = ["color", "suggestions"] }
+clap_complete = { version = "4.6.0", features = ["unstable-dynamic"] }
+dialoguer = "0.12.0"
+dotenvy = "0.15"
+kdl = { version = "6", features = ["span"] }
+miette = { version = "7.6.0", features = ["fancy"] }
+thiserror = "2"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", features = ["signal", "process"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

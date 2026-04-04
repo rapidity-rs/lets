@@ -1,0 +1,118 @@
+description "Lets — development tasks"
+
+config {
+    sorted
+    shell "zsh"
+}
+
+build {
+    description "Build the project"
+    long-description """
+        Build the project using cargo. Defaults to debug mode.
+        Use --release for an optimized production build.
+        """
+    examples """
+        lets build              Debug build
+        lets build --release    Optimized release build
+        """
+    alias "b"
+    flag release "-r" help="Build in release mode"
+    run "cargo build {?release:--release}"
+}
+
+test {
+    description "Run the test suite"
+    long-description """
+        Run the full test suite via cargo test. Extra arguments
+        after -- are forwarded directly to the test harness.
+        """
+    examples """
+        lets test                       Run all tests
+        lets test -- --nocapture        Run with stdout visible
+        lets test -- test_name          Run a specific test
+        """
+    alias "t"
+    run "cargo test {--}"
+}
+
+lint {
+    description "Run clippy lints"
+    silent
+    run "cargo clippy -- -D warnings"
+}
+
+fmt {
+    description "Format code"
+    flag check "-c" help="Check formatting without modifying files"
+    run "cargo fmt {?check:--check}"
+}
+
+doc {
+    description "Documentation commands"
+
+    api {
+        description "Build rustdoc API documentation"
+        flag open "-o" help="Open in browser after building"
+        run "cargo doc --no-deps {?open:--open}"
+    }
+
+    site {
+        description "Build the user-facing documentation site"
+        dir "docs"
+        run "uv run zensical build"
+    }
+
+    serve {
+        description "Preview documentation site locally"
+        dir "docs"
+        run "uv run zensical serve"
+    }
+}
+
+clean {
+    description "Remove build artifacts"
+    confirm "This will delete the target/ directory. Continue?"
+    run "cargo clean"
+}
+
+check {
+    description "Code quality checks"
+    long-description """
+        Run formatting, linting, and tests in sequence.
+        Equivalent to running fmt, lint, and test individually.
+        """
+    steps "fmt" "lint" "test"
+}
+
+ci {
+    description "Full CI pipeline"
+    long-description """
+        Run the complete CI pipeline: formatting, linting,
+        and tests in sequence with status messages.
+        """
+    steps "check"
+    before "echo Running CI pipeline..."
+    after "echo CI complete!"
+}
+
+release {
+    description "Build optimized binaries for release"
+    long-description """
+        Build a release binary with native CPU optimizations.
+        Runs the full quality check pipeline first via deps.
+        """
+    deps "check"
+    env RUSTFLAGS="-C target-cpu=native"
+    run "cargo build --release"
+    after "ls -lh target/release/lets"
+}
+
+publish {
+    description "Publish the crate to crates.io"
+    long-description """
+        Publish to crates.io. Runs a full release build
+        first to ensure everything compiles cleanly.
+        """
+    deps "release"
+    run "cargo publish"
+}
