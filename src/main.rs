@@ -81,32 +81,48 @@ fn run() -> error::Result<()> {
         return commands::handle_self_setup();
     }
 
-    let config_path = match resolve_config_path() {
-        Ok(path) => path,
+    let (tree, config_found) = match resolve_config_path() {
+        Ok(path) => (parse::parse_file(&path)?, true),
         Err(error::Error::ConfigNotFound { .. }) => {
-            return handle_no_config();
+            // No config — build an empty tree so self commands still work.
+            let empty = tree::CommandTree {
+                description: None,
+                config: tree::Config::default(),
+                commands: Vec::new(),
+            };
+            (empty, false)
         }
         Err(e) => return Err(e),
     };
-    let tree = parse::parse_file(&config_path)?;
     let mut clap_cmd = cli::build_cli(&tree);
 
     let matches = clap_cmd.clone().get_matches();
 
     // Built-in flags.
     if matches.get_flag("list") {
+        if !config_found {
+            return handle_no_config();
+        }
         commands::print_command_list(&tree);
         return Ok(());
     }
 
     // Handle `lets self <subcommand>`.
     if let Some(("self", self_matches)) = matches.subcommand() {
+        // check and completions require a config file.
+        if !config_found && let Some(("check" | "completions", _)) = self_matches.subcommand() {
+            return handle_no_config();
+        }
         return handle_self(&tree, &mut clap_cmd, self_matches);
     }
 
     if matches.subcommand().is_none() {
         clap_cmd.print_help().ok();
         println!();
+        if !config_found {
+            eprintln!();
+            eprintln!("No lets.kdl found. Run `lets self init` to get started.");
+        }
         return Ok(());
     }
 
@@ -166,16 +182,11 @@ fn is_self_setup() -> bool {
     positional.first() == Some(&"self") && positional.get(1) == Some(&"setup")
 }
 
-/// Handle the case where no lets.kdl is found.
-/// Shows a friendly message instead of a raw error.
+/// Handle commands that require a lets.kdl when none is found.
 fn handle_no_config() -> error::Result<()> {
-    eprintln!("No lets.kdl found in this directory or any parent.");
-    eprintln!();
-    eprintln!("To get started, run:");
-    eprintln!();
-    eprintln!("  lets self init");
-    eprintln!();
-    process::exit(1);
+    Err(error::Error::Other(
+        "No lets.kdl found. Run `lets self init` to create one.".to_string(),
+    ))
 }
 
 fn resolve_config_path() -> error::Result<PathBuf> {

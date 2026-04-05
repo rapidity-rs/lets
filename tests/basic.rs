@@ -119,7 +119,7 @@ fn bare_invocation_shows_help() {
 }
 
 #[test]
-fn missing_config_shows_error() {
+fn missing_config_shows_help_with_hint() {
     let dir = tempfile::tempdir().unwrap();
 
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_lets"))
@@ -127,7 +127,10 @@ fn missing_config_shows_error() {
         .output()
         .unwrap();
 
-    assert!(!output.status.success());
+    // Bare invocation with no config shows help (exit 0) with a hint on stderr.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("self"), "should show self command in help");
+
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("No lets.kdl found"));
     assert!(stderr.contains("lets self init"));
