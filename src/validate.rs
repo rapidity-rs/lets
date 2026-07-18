@@ -22,11 +22,14 @@ pub fn validate(tree: &CommandTree, ctx: &SourceCtx) -> Result<()> {
 fn validate_refs(tree: &CommandTree, commands: &[CommandNode], ctx: &SourceCtx) -> Result<()> {
     for cmd in commands {
         for refs in [&cmd.orch.deps, &cmd.orch.steps] {
-            for (task_path, ref_span) in refs {
-                let display_path = task_path.join(" ");
-                let target = tree.resolve_path(task_path).ok_or_else(|| {
-                    ctx.error(format!("unknown task '{display_path}'"), *ref_span)
-                })?;
+            for task_ref in refs {
+                let display_path = task_ref.display();
+                let Some((target, args)) = tree.resolve_ref(task_ref) else {
+                    return Err(ctx.error(format!("unknown task '{display_path}'"), task_ref.span));
+                };
+                if !args.is_empty() {
+                    return Err(ctx.error(format!("unknown task '{display_path}'"), task_ref.span));
+                }
 
                 let has_required_args = target.args.iter().any(|a| a.default.is_none());
                 if has_required_args {
@@ -35,7 +38,7 @@ fn validate_refs(tree: &CommandTree, commands: &[CommandNode], ctx: &SourceCtx) 
                             "'{display_path}' has required arguments \
                              (deps/steps cannot supply arguments)"
                         ),
-                        *ref_span,
+                        task_ref.span,
                     ));
                 }
 
@@ -49,7 +52,7 @@ fn validate_refs(tree: &CommandTree, commands: &[CommandNode], ctx: &SourceCtx) 
                             "'{display_path}' has required valued flags without defaults \
                              (deps/steps cannot supply flag values)"
                         ),
-                        *ref_span,
+                        task_ref.span,
                     ));
                 }
             }
@@ -94,9 +97,10 @@ fn detect_cycle(
     }
 
     for refs in [&node.orch.deps, &node.orch.steps] {
-        for (task_path, _span) in refs {
-            if let Some(target) = tree.resolve_path(task_path) {
-                detect_cycle(tree, target, task_path, visiting, visited)?;
+        for task_ref in refs {
+            if let Some((target, args)) = tree.resolve_ref(task_ref) {
+                let path = &task_ref.tokens[..task_ref.tokens.len() - args.len()];
+                detect_cycle(tree, target, path, visiting, visited)?;
             }
         }
     }

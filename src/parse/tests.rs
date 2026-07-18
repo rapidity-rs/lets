@@ -370,8 +370,8 @@ fn resolve_path_missing() {
     assert!(tree.resolve_path(&["nope".to_string()]).is_none());
 }
 
-fn paths(refs: &[(Vec<String>, miette::SourceSpan)]) -> Vec<Vec<String>> {
-    refs.iter().map(|(p, _)| p.clone()).collect()
+fn paths(refs: &[crate::tree::TaskRef]) -> Vec<Vec<String>> {
+    refs.iter().map(|r| r.tokens.clone()).collect()
 }
 
 #[test]

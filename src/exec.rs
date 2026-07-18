@@ -45,11 +45,10 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches) -> Result<()> {
     run_deps(node, tree, dry_run)?;
 
     // 2. Sequential steps.
-    for (path, _) in &node.orch.steps {
-        let display = path.join(" ");
-        let step_node = tree
-            .resolve_path(path)
-            .ok_or_else(|| Error::Other(format!("step '{display}' not found")))?;
+    for task_ref in &node.orch.steps {
+        let (step_node, _args) = tree
+            .resolve_ref(task_ref)
+            .ok_or_else(|| Error::Other(format!("step '{}' not found", task_ref.display())))?;
         exec_node_direct(step_node, tree, dry_run)?;
     }
 
@@ -110,11 +109,10 @@ fn exec_node_direct(node: &CommandNode, tree: &CommandTree, dry_run: bool) -> Re
     run_deps(node, tree, dry_run)?;
 
     // Sequential steps.
-    for (path, _) in &node.orch.steps {
-        let display = path.join(" ");
-        let step_node = tree
-            .resolve_path(path)
-            .ok_or_else(|| Error::Other(format!("step '{display}' not found")))?;
+    for task_ref in &node.orch.steps {
+        let (step_node, _args) = tree
+            .resolve_ref(task_ref)
+            .ok_or_else(|| Error::Other(format!("step '{}' not found", task_ref.display())))?;
         exec_node_direct(step_node, tree, dry_run)?;
     }
 
@@ -218,12 +216,11 @@ fn run_deps(node: &CommandNode, tree: &CommandTree, dry_run: bool) -> Result<()>
             .orch
             .deps
             .iter()
-            .map(|(path, _)| {
+            .map(|task_ref| {
                 s.spawn(|| {
-                    let display = path.join(" ");
-                    let dep_node = tree
-                        .resolve_path(path)
-                        .ok_or_else(|| Error::Other(format!("dep '{display}' not found")))?;
+                    let (dep_node, _args) = tree.resolve_ref(task_ref).ok_or_else(|| {
+                        Error::Other(format!("dep '{}' not found", task_ref.display()))
+                    })?;
                     exec_node_direct(dep_node, tree, dry_run)
                 })
             })

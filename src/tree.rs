@@ -111,13 +111,29 @@ impl RunConfig {
     }
 }
 
+/// A reference to another task from `deps` or `steps`.
+#[derive(Debug, Clone)]
+pub struct TaskRef {
+    /// Whitespace-split tokens: a command path, optionally followed by arguments.
+    pub tokens: Vec<String>,
+    /// Source span of the reference (for error reporting).
+    pub span: miette::SourceSpan,
+}
+
+impl TaskRef {
+    /// Human-readable form of the reference, as written in the config.
+    pub fn display(&self) -> String {
+        self.tokens.join(" ")
+    }
+}
+
 /// Task orchestration: deps, steps, hooks.
 #[derive(Debug, Clone, Default)]
 pub struct Orchestration {
-    /// Tasks to run in parallel before this command. Each entry is (path, span).
-    pub deps: Vec<(Vec<String>, miette::SourceSpan)>,
-    /// Tasks to run sequentially before this command. Each entry is (path, span).
-    pub steps: Vec<(Vec<String>, miette::SourceSpan)>,
+    /// Tasks to run in parallel before this command.
+    pub deps: Vec<TaskRef>,
+    /// Tasks to run sequentially before this command.
+    pub steps: Vec<TaskRef>,
     /// Shell command to run before the main `run`.
     pub before: Option<String>,
     /// Shell command to run after the main `run`.
@@ -260,6 +276,23 @@ impl CommandTree {
             commands = &found.children;
         }
         node
+    }
+
+    /// Resolve a task reference: the longest token prefix that names a command
+    /// path becomes the target; remaining tokens are its CLI arguments.
+    pub fn resolve_ref<'a>(&'a self, r: &'a TaskRef) -> Option<(&'a CommandNode, &'a [String])> {
+        // Tokens from the first flag-looking token onward can never be path segments.
+        let max = r
+            .tokens
+            .iter()
+            .position(|t| t.starts_with('-'))
+            .unwrap_or(r.tokens.len());
+        for len in (1..=max).rev() {
+            if let Some(node) = self.resolve_path(&r.tokens[..len]) {
+                return Some((node, &r.tokens[len..]));
+            }
+        }
+        None
     }
 }
 

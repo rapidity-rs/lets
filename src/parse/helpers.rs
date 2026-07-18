@@ -4,10 +4,9 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use kdl::KdlNode;
-use miette::SourceSpan;
 
 use crate::error::{Error, Result};
-use crate::tree::{Config, Platform};
+use crate::tree::{Config, Platform, TaskRef};
 
 /// Extract the first positional string argument from a KDL node.
 pub(super) fn first_string_arg(node: &KdlNode) -> Option<String> {
@@ -129,19 +128,23 @@ pub(super) fn parse_string_list(node: &KdlNode) -> Vec<String> {
 }
 
 /// Parse task references from a `deps` or `steps` node.
-/// Each positional string is split on whitespace to support nested paths like `"db migrate"`.
-pub(super) fn parse_task_refs(node: &KdlNode) -> Vec<(Vec<String>, SourceSpan)> {
+/// Each positional string is split on whitespace: a nested command path like
+/// `"db migrate"`, optionally followed by arguments like `"build --release"`.
+pub(super) fn parse_task_refs(node: &KdlNode) -> Vec<TaskRef> {
     node.entries()
         .iter()
         .filter(|e| e.name().is_none())
         .filter_map(|e| {
-            let path: Vec<String> = e
+            let tokens: Vec<String> = e
                 .value()
                 .as_string()?
                 .split_whitespace()
                 .map(String::from)
                 .collect();
-            Some((path, e.span()))
+            Some(TaskRef {
+                tokens,
+                span: e.span(),
+            })
         })
         .collect()
 }
