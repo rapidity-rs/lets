@@ -132,7 +132,7 @@ fn maybe_sorted<'a>(
     items
 }
 
-fn build_subcommand(node: &CommandNode, sorted: bool) -> Command {
+pub(crate) fn build_subcommand(node: &CommandNode, sorted: bool) -> Command {
     let mut cmd = Command::new(leak(&node.name)).disable_help_subcommand(true);
 
     if !node.aliases.is_empty() {

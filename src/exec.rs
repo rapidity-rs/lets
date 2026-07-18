@@ -150,7 +150,7 @@ impl Orchestrator<'_> {
     }
 
     /// Run a referenced task at most once per invocation.
-    fn run_task(&self, key: &[String], node: &CommandNode) -> Result<()> {
+    fn run_task(&self, key: &[String], node: &CommandNode, args: &[String]) -> Result<()> {
         match self.registry.claim(key) {
             Claim::Done => Ok(()),
             Claim::Failed => Err(Error::Other(format!("task '{}' failed", key.join(" ")))),
@@ -160,7 +160,7 @@ impl Orchestrator<'_> {
                     key,
                     ok: false,
                 };
-                let result = self.exec_node(node, key);
+                let result = self.exec_node(node, key, args);
                 guard.ok = result.is_ok();
                 result
             }
@@ -180,11 +180,11 @@ impl Orchestrator<'_> {
                 .iter()
                 .map(|task_ref| {
                     s.spawn(|| {
-                        let (dep_node, _args) =
+                        let (dep_node, args) =
                             self.tree.resolve_ref(task_ref).ok_or_else(|| {
                                 Error::Other(format!("dep '{}' not found", task_ref.display()))
                             })?;
-                        self.run_task(&task_ref.tokens, dep_node)
+                        self.run_task(&task_ref.tokens, dep_node, args)
                     })
                 })
                 .collect();
@@ -202,18 +202,19 @@ impl Orchestrator<'_> {
     /// Run all steps sequentially. Fails on first error.
     fn run_steps(&self, node: &CommandNode) -> Result<()> {
         for task_ref in &node.orch.steps {
-            let (step_node, _args) = self
+            let (step_node, args) = self
                 .tree
                 .resolve_ref(task_ref)
                 .ok_or_else(|| Error::Other(format!("step '{}' not found", task_ref.display())))?;
-            self.run_task(&task_ref.tokens, step_node)?;
+            self.run_task(&task_ref.tokens, step_node, args)?;
         }
         Ok(())
     }
 
-    /// Execute a command node invoked via deps/steps (no ArgMatches).
-    /// Interpolates using interactive bindings and declared defaults.
-    fn exec_node(&self, node: &CommandNode, key: &[String]) -> Result<()> {
+    /// Execute a command node invoked via deps/steps.
+    /// With reference arguments, they are parsed by the target's own clap
+    /// definition; otherwise interpolation falls back to declared defaults.
+    fn exec_node(&self, node: &CommandNode, key: &[String], args: &[String]) -> Result<()> {
         warn_deprecated(node);
 
         let ctx = ExecContext::from_node(node, &self.tree.config, self.dry_run)?;
@@ -230,9 +231,26 @@ impl Orchestrator<'_> {
         // Main commands.
         let empty = HashMap::new();
         let vars = self.interactions.get(key).unwrap_or(&empty);
-        for command in node.run.resolve() {
-            let interpolated = interpolate_with_defaults(command, node, vars);
-            exec_shell(&interpolated, &ctx)?;
+        if args.is_empty() {
+            for command in node.run.resolve() {
+                let interpolated = interpolate_with_defaults(command, node, vars);
+                exec_shell(&interpolated, &ctx)?;
+            }
+        } else {
+            // Validated at load time; parse again here to get real ArgMatches.
+            let argv = std::iter::once(node.name.clone()).chain(args.iter().cloned());
+            let matches = crate::cli::build_subcommand(node, false)
+                .try_get_matches_from(argv)
+                .map_err(|e| {
+                    Error::Other(format!(
+                        "invalid arguments for task '{}': {e}",
+                        key.join(" ")
+                    ))
+                })?;
+            for command in node.run.resolve() {
+                let interpolated = interpolate_cmd(command, node, &matches, vars);
+                exec_shell(&interpolated, &ctx)?;
+            }
         }
 
         // After hook.

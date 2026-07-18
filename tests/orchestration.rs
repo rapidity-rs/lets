@@ -457,3 +457,119 @@ fn shared_failing_dep_fails_all_dependents() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(!stdout.contains("ALL"), "main must not run:\n{stdout}");
 }
+
+#[test]
+fn dep_with_argument() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        build {
+            arg mode
+            run "echo BUILD-{mode}"
+        }
+        ci {
+            deps "build fast"
+            run "echo CI"
+        }
+        "#,
+    );
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "ci"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("BUILD-fast"),
+        "arg not interpolated:\n{stdout}"
+    );
+    assert!(stdout.contains("CI"));
+}
+
+#[test]
+fn step_with_flag() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        build {
+            flag release "-r"
+            run "echo MODE{?release:-RELEASE}"
+        }
+        ci {
+            steps "build --release"
+            run "echo CI"
+        }
+        "#,
+    );
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "ci"])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("MODE-RELEASE"),
+        "flag not applied:\n{stdout}"
+    );
+}
+
+#[test]
+fn same_task_with_different_args_runs_each() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        emit {
+            arg word default="none"
+            run "echo EMIT-{word}"
+        }
+        all {
+            steps "emit one" "emit two"
+            run "echo ALL"
+        }
+        "#,
+    );
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "all"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("EMIT-one"));
+    assert!(stdout.contains("EMIT-two"));
+}
+
+#[test]
+fn dep_with_invalid_argument_fails_at_load() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        build "echo BUILD"
+        ci {
+            deps "build --nope"
+            run "echo CI"
+        }
+        "#,
+    );
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "ci"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("CI"),
+        "must fail before executing:\n{stdout}"
+    );
+}

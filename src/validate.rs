@@ -2,7 +2,7 @@
 //!
 //! Runs after parsing to catch structural errors:
 //! - All `deps`/`steps` references resolve to existing commands
-//! - Referenced commands have no required arguments (since deps/steps can't supply them)
+//! - Arguments supplied in a reference (or defaults) satisfy the target's CLI
 //! - No dependency cycles exist (direct or indirect, via DFS)
 
 use std::collections::HashSet;
@@ -18,7 +18,8 @@ pub fn validate(tree: &CommandTree, ctx: &SourceCtx) -> Result<()> {
     Ok(())
 }
 
-/// Check that all dep/step references resolve to existing commands with no required args.
+/// Check that all dep/step references resolve to existing commands and that
+/// supplied arguments (plus declared defaults) satisfy the target's CLI.
 fn validate_refs(tree: &CommandTree, commands: &[CommandNode], ctx: &SourceCtx) -> Result<()> {
     for cmd in commands {
         for refs in [&cmd.orch.deps, &cmd.orch.steps] {
@@ -27,39 +28,59 @@ fn validate_refs(tree: &CommandTree, commands: &[CommandNode], ctx: &SourceCtx) 
                 let Some((target, args)) = tree.resolve_ref(task_ref) else {
                     return Err(ctx.error(format!("unknown task '{display_path}'"), task_ref.span));
                 };
-                if !args.is_empty() {
-                    return Err(ctx.error(format!("unknown task '{display_path}'"), task_ref.span));
-                }
 
-                let has_required_args = target.args.iter().any(|a| a.default.is_none());
-                if has_required_args {
-                    return Err(ctx.error(
-                        format!(
-                            "'{display_path}' has required arguments \
-                             (deps/steps cannot supply arguments)"
-                        ),
-                        task_ref.span,
-                    ));
-                }
+                // Parse the reference's arguments against the target's real
+                // clap definition so bad references fail at load time.
+                let clap_cmd = crate::cli::build_subcommand(target, false);
+                let argv = std::iter::once(target.name.clone()).chain(args.iter().cloned());
+                let matches = match clap_cmd.try_get_matches_from(argv) {
+                    Ok(matches) => matches,
+                    Err(e) => {
+                        return Err(ctx.error(
+                            format!(
+                                "invalid task reference '{display_path}': {}",
+                                clap_error_summary(&e)
+                            ),
+                            task_ref.span,
+                        ));
+                    }
+                };
 
-                let has_required_flags = target
-                    .flags
-                    .iter()
-                    .any(|f| f.value_type.is_some() && f.default.is_none());
-                if has_required_flags {
-                    return Err(ctx.error(
-                        format!(
-                            "'{display_path}' has required valued flags without defaults \
-                             (deps/steps cannot supply flag values)"
-                        ),
-                        task_ref.span,
-                    ));
+                // Valued flags without defaults must be supplied explicitly:
+                // they would otherwise interpolate as empty strings.
+                for flag in &target.flags {
+                    if flag.value_type.is_some()
+                        && flag.default.is_none()
+                        && !matches.contains_id(&flag.name)
+                    {
+                        return Err(ctx.error(
+                            format!(
+                                "'{display_path}' has required valued flags without defaults \
+                                 (supply a value in the reference or add default=)"
+                            ),
+                            task_ref.span,
+                        ));
+                    }
                 }
             }
         }
         validate_refs(tree, &cmd.children, ctx)?;
     }
     Ok(())
+}
+
+/// Condense a rendered clap error to its message lines (drops the Usage block).
+fn clap_error_summary(err: &clap::Error) -> String {
+    let rendered = err.render().to_string();
+    let mut parts: Vec<&str> = Vec::new();
+    for line in rendered.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("Usage:") {
+            break;
+        }
+        parts.push(trimmed.strip_prefix("error:").map_or(trimmed, str::trim));
+    }
+    parts.join(" ")
 }
 
 fn validate_no_cycles(tree: &CommandTree, commands: &[CommandNode]) -> Result<()> {
@@ -305,5 +326,66 @@ mod tests {
             "#,
         );
         assert!(err.contains("required valued flags"), "got: {err}");
+    }
+
+    #[test]
+    fn dep_supplying_required_arg_ok() {
+        let tree = parse(
+            r#"
+            greet {
+                arg name
+                run "echo {name}"
+            }
+            ci {
+                deps "greet world"
+            }
+            "#,
+        );
+        assert_eq!(tree.commands[1].orch.deps.len(), 1);
+    }
+
+    #[test]
+    fn dep_supplying_valued_flag_ok() {
+        let tree = parse(
+            r#"
+            deploy {
+                flag replicas "-r" type="int"
+                run "deploy --replicas {replicas}"
+            }
+            ci {
+                deps "deploy --replicas 3"
+            }
+            "#,
+        );
+        assert_eq!(tree.commands[1].orch.deps.len(), 1);
+    }
+
+    #[test]
+    fn dep_with_unknown_flag_rejected() {
+        let err = parse_err(
+            r#"
+            build "echo hi"
+            ci {
+                deps "build --nope"
+            }
+            "#,
+        );
+        assert!(err.contains("invalid task reference"), "got: {err}");
+    }
+
+    #[test]
+    fn dep_with_invalid_choice_rejected() {
+        let err = parse_err(
+            r#"
+            deploy {
+                arg environment "dev" "prod"
+                run "echo {environment}"
+            }
+            ci {
+                deps "deploy banana"
+            }
+            "#,
+        );
+        assert!(err.contains("invalid task reference"), "got: {err}");
     }
 }
