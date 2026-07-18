@@ -18,6 +18,24 @@ release {
 
 When you run `lets release`, both `lint` and `test` start simultaneously. Once all deps finish, `release` runs. If any dep fails, the main command never executes.
 
+### Run-once semantics
+
+Every task runs **at most once per invocation**, no matter how many places reference it. In a diamond — two deps that share a common dependency — the shared task executes a single time; concurrent references wait for the in-flight run to finish instead of starting a duplicate:
+
+```kdl
+shared "cargo build"
+lint { deps "shared"; run "cargo clippy" }
+test { deps "shared"; run "cargo test" }
+
+ci {
+    deps "lint" "test"
+}
+```
+
+`lets ci` builds once, not twice. If a shared task fails, every task depending on it fails.
+
+References with different arguments are different tasks: `deps "build fast"` and `deps "build slow"` each run.
+
 ### Nested references
 
 Reference subcommands with space-separated paths:
@@ -32,6 +50,25 @@ deploy {
     run "scripts/deploy.sh"
 }
 ```
+
+### Passing arguments
+
+Tokens after the command path are parsed as that command's own arguments and flags — the same parsing and validation as invoking it from the command line:
+
+```kdl
+build {
+    arg mode default="debug"
+    flag jobs "-j" type="int" default="1"
+    run "cargo build --profile {mode} -j {jobs}"
+}
+
+release {
+    deps "build release -j 8"
+    run "gh release create"
+}
+```
+
+Invalid references — unknown flags, missing required arguments, values outside an `arg`'s choices — are rejected when the config loads, not midway through a run.
 
 ## Sequential steps (`steps`)
 
@@ -102,13 +139,12 @@ Hooks are simple shell strings — they don't support arguments or interpolation
 
 For any command, the complete execution order is:
 
-1. **`deps`** — parallel dependencies
-2. **`steps`** — sequential steps
-3. **Interactive** — `choose`, `prompt` (see [Interactive](interactive.md))
-4. **`confirm`** — yes/no confirmation
-5. **`before`** hook
-6. **`run`** commands (sequential, with interpolation)
-7. **`after`** hook
+1. **Interactive** — every `choose`, `prompt`, and `confirm` in the whole task graph (deps and steps included) runs serially up front, so prompts never interleave with parallel output. A declined confirmation aborts before anything executes. See [Interactive](interactive.md).
+2. **`deps`** — parallel dependencies (run-once)
+3. **`steps`** — sequential steps (run-once)
+4. **`before`** hook
+5. **`run`** commands (sequential, with interpolation)
+6. **`after`** hook
 
 ## Real-world example
 

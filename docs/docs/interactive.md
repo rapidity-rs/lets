@@ -33,6 +33,8 @@ $ lets deploy prod
 Deploy to prod? [y/N]
 ```
 
+Confirmation guards hold everywhere: when a confirm-guarded command is pulled in as a dependency or step of another command, the prompt still appears (up front, before anything executes). Without a terminal, the run fails rather than silently skipping the guard — use `--yes` in CI.
+
 ## Text input (`prompt`)
 
 Ask the user for text input, bound to a variable:

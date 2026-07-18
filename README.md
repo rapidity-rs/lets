@@ -172,7 +172,16 @@ release {
 }
 ```
 
-`deps` run in parallel. `steps` run sequentially. Both complete before the main `run`.
+`deps` run in parallel. `steps` run sequentially. Both complete before the main `run`, and every task runs at most once per invocation — shared dependencies are never duplicated.
+
+References can pass arguments and flags, validated at load time:
+
+```kdl
+release {
+    deps "build release -j 8"
+    run "gh release create"
+}
+```
 
 ### Hooks
 
