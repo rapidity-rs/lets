@@ -1,16 +1,18 @@
 //! Command orchestration.
 //!
 //! Resolves the matched subcommand from clap back to the command tree and
-//! executes the full lifecycle: deps (parallel), steps (sequential),
-//! interactive prompts, confirmation, before/after hooks, and run commands.
+//! executes the full lifecycle: interactive prompts and confirmations
+//! (collected up front, across the whole task graph), deps (parallel,
+//! run-once), steps (sequential, run-once), before/after hooks, and run
+//! commands.
 //!
 //! Delegates actual process spawning to [`crate::shell`] and placeholder
 //! interpolation to [`crate::interpolate`].
 
-use parking_lot::{Condvar, Mutex};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use clap::ArgMatches;
+use parking_lot::{Condvar, Mutex};
 
 use crate::error::{Error, Result};
 use crate::interpolate::{self, Placeholder};
@@ -19,11 +21,61 @@ use crate::tree::{CommandNode, CommandTree, FlagType};
 
 /// Resolve the matched subcommand from clap back to our tree and execute it.
 pub fn run(tree: &CommandTree, matches: &ArgMatches) -> Result<()> {
-    let Some((node, node_matches)) = resolve(tree, matches) else {
+    let Some((node, node_matches, root_key)) = resolve(tree, matches) else {
         return Ok(());
     };
 
-    // Warn if the command is deprecated.
+    warn_deprecated(node);
+
+    let yes = matches.get_flag("yes");
+    let dry_run = matches.get_flag("dry-run");
+    let ctx = ExecContext::from_node(node, &tree.config, dry_run)?;
+
+    // Collect every prompt/choose/confirm in the transitive task graph up
+    // front, serially, before any (parallel) execution starts. A declined
+    // confirmation aborts the run before anything has executed.
+    let mut orch = Orchestrator {
+        tree,
+        registry: Registry::new(),
+        interactions: HashMap::new(),
+        dry_run,
+    };
+    let mut visited = HashSet::new();
+    orch.collect_interaction(node, &root_key, yes, &mut visited)?;
+
+    let interactive_vars = orch
+        .interactions
+        .get(&root_key)
+        .cloned()
+        .unwrap_or_default();
+
+    // 1. Parallel deps (run-once).
+    orch.run_deps(node)?;
+
+    // 2. Sequential steps (run-once).
+    orch.run_steps(node)?;
+
+    // 3. Before hook.
+    if let Some(before) = &node.orch.before {
+        exec_shell(before, &ctx)?;
+    }
+
+    // 4. Main commands (with interpolation from clap matches + interactive vars).
+    for command in node.run.resolve() {
+        let interpolated = interpolate_cmd(command, node, node_matches, &interactive_vars);
+        exec_shell(&interpolated, &ctx)?;
+    }
+
+    // 5. After hook.
+    if let Some(after) = &node.orch.after {
+        exec_shell(after, &ctx)?;
+    }
+
+    Ok(())
+}
+
+/// Print a deprecation warning if the node is marked deprecated.
+fn warn_deprecated(node: &CommandNode) {
     if let Some(msg) = &node.deprecated {
         if msg.is_empty() {
             eprintln!("\x1b[33mwarning:\x1b[0m '{}' is deprecated", node.name);
@@ -34,27 +86,53 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches) -> Result<()> {
             );
         }
     }
+}
 
-    let yes = matches.get_flag("yes");
-    let dry_run = matches.get_flag("dry-run");
-    let ctx = ExecContext::from_node(node, &tree.config, dry_run)?;
-    let registry = Registry::new();
+/// Shared state for one invocation's task graph execution.
+struct Orchestrator<'a> {
+    tree: &'a CommandTree,
+    registry: Registry,
+    /// Interactive variable bindings collected up front, keyed by task key.
+    interactions: HashMap<Vec<String>, HashMap<String, String>>,
+    dry_run: bool,
+}
 
-    // Collect interactive variable bindings.
-    let interactive_vars = run_interactive(node, yes)?;
+impl Orchestrator<'_> {
+    /// Depth-first walk of the transitive task graph (deps, then steps, then
+    /// the node itself) running every prompt/choose/confirm serially.
+    ///
+    /// Interaction must happen before execution: deps run on parallel threads
+    /// that cannot share a terminal, and a user declining a confirmation
+    /// should abort the run before any work has started.
+    fn collect_interaction(
+        &mut self,
+        node: &CommandNode,
+        key: &[String],
+        yes: bool,
+        visited: &mut HashSet<Vec<String>>,
+    ) -> Result<()> {
+        if !visited.insert(key.to_vec()) {
+            return Ok(());
+        }
 
-    // 1. Parallel deps.
-    run_deps(node, tree, &registry, dry_run)?;
+        for task_ref in node.orch.deps.iter().chain(&node.orch.steps) {
+            let (target, _args) = self
+                .tree
+                .resolve_ref(task_ref)
+                .ok_or_else(|| Error::Other(format!("task '{}' not found", task_ref.display())))?;
+            self.collect_interaction(target, &task_ref.tokens, yes, visited)?;
+        }
 
-    // 2. Sequential steps.
-    run_steps(node, tree, &registry, dry_run)?;
+        let vars = run_interactive(node, yes)?;
 
-    // 3. Confirm (after interactive vars are collected, so interpolation works in the message).
-    if let Some(confirm_msg) = &node.interactive.confirm
-        && !dry_run
-    {
-        let rendered = interpolate_simple(confirm_msg, &interactive_vars);
-        if !yes {
+        // Confirmations are skipped in dry-run (nothing will execute) and
+        // auto-accepted by --yes. Without a TTY, dialoguer fails — a command
+        // guarded by `confirm` never silently runs.
+        if let Some(confirm_msg) = &node.interactive.confirm
+            && !self.dry_run
+            && !yes
+        {
+            let rendered = interpolate_simple(confirm_msg, &vars);
             let confirmed = dialoguer::Confirm::new()
                 .with_prompt(&rendered)
                 .default(false)
@@ -64,77 +142,115 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches) -> Result<()> {
                 return Err(Error::Other("aborted by user".to_string()));
             }
         }
+
+        if !vars.is_empty() {
+            self.interactions.insert(key.to_vec(), vars);
+        }
+        Ok(())
     }
 
-    // 4. Before hook.
-    if let Some(before) = &node.orch.before {
-        exec_shell(before, &ctx)?;
-    }
-
-    // 5. Main commands (with interpolation from clap matches + interactive vars).
-    for command in node.run.resolve() {
-        let interpolated = interpolate_cmd(command, node, node_matches, &interactive_vars);
-        exec_shell(&interpolated, &ctx)?;
-    }
-
-    // 6. After hook.
-    if let Some(after) = &node.orch.after {
-        exec_shell(after, &ctx)?;
-    }
-
-    Ok(())
-}
-
-/// Execute a command node directly, without ArgMatches (for deps/steps invocation).
-/// Interpolates the run string using default values for args and flags.
-fn exec_node_direct(
-    node: &CommandNode,
-    tree: &CommandTree,
-    registry: &Registry,
-    dry_run: bool,
-) -> Result<()> {
-    // Warn if the command is deprecated.
-    if let Some(msg) = &node.deprecated {
-        if msg.is_empty() {
-            eprintln!("\x1b[33mwarning:\x1b[0m '{}' is deprecated", node.name);
-        } else {
-            eprintln!(
-                "\x1b[33mwarning:\x1b[0m '{}' is deprecated. {msg}",
-                node.name
-            );
+    /// Run a referenced task at most once per invocation.
+    fn run_task(&self, key: &[String], node: &CommandNode) -> Result<()> {
+        match self.registry.claim(key) {
+            Claim::Done => Ok(()),
+            Claim::Failed => Err(Error::Other(format!("task '{}' failed", key.join(" ")))),
+            Claim::Run => {
+                let mut guard = ClaimGuard {
+                    registry: &self.registry,
+                    key,
+                    ok: false,
+                };
+                let result = self.exec_node(node, key);
+                guard.ok = result.is_ok();
+                result
+            }
         }
     }
 
-    let ctx = ExecContext::from_node(node, &tree.config, dry_run)?;
+    /// Run all deps in parallel using scoped threads. Fails on first error.
+    fn run_deps(&self, node: &CommandNode) -> Result<()> {
+        if node.orch.deps.is_empty() {
+            return Ok(());
+        }
 
-    // Parallel deps.
-    run_deps(node, tree, registry, dry_run)?;
+        std::thread::scope(|s| {
+            let handles: Vec<_> = node
+                .orch
+                .deps
+                .iter()
+                .map(|task_ref| {
+                    s.spawn(|| {
+                        let (dep_node, _args) =
+                            self.tree.resolve_ref(task_ref).ok_or_else(|| {
+                                Error::Other(format!("dep '{}' not found", task_ref.display()))
+                            })?;
+                        self.run_task(&task_ref.tokens, dep_node)
+                    })
+                })
+                .collect();
 
-    // Sequential steps.
-    run_steps(node, tree, registry, dry_run)?;
+            for handle in handles {
+                handle
+                    .join()
+                    .map_err(|_| Error::Other("dependency thread panicked".to_string()))??;
+            }
 
-    // Before hook.
-    if let Some(before) = &node.orch.before {
-        exec_shell(before, &ctx)?;
+            Ok(())
+        })
     }
 
-    // Main commands — interpolate with defaults.
-    for command in node.run.resolve() {
-        let interpolated = interpolate_with_defaults(command, node);
-        exec_shell(&interpolated, &ctx)?;
+    /// Run all steps sequentially. Fails on first error.
+    fn run_steps(&self, node: &CommandNode) -> Result<()> {
+        for task_ref in &node.orch.steps {
+            let (step_node, _args) = self
+                .tree
+                .resolve_ref(task_ref)
+                .ok_or_else(|| Error::Other(format!("step '{}' not found", task_ref.display())))?;
+            self.run_task(&task_ref.tokens, step_node)?;
+        }
+        Ok(())
     }
 
-    // After hook.
-    if let Some(after) = &node.orch.after {
-        exec_shell(after, &ctx)?;
-    }
+    /// Execute a command node invoked via deps/steps (no ArgMatches).
+    /// Interpolates using interactive bindings and declared defaults.
+    fn exec_node(&self, node: &CommandNode, key: &[String]) -> Result<()> {
+        warn_deprecated(node);
 
-    Ok(())
+        let ctx = ExecContext::from_node(node, &self.tree.config, self.dry_run)?;
+
+        // Nested deps and steps.
+        self.run_deps(node)?;
+        self.run_steps(node)?;
+
+        // Before hook.
+        if let Some(before) = &node.orch.before {
+            exec_shell(before, &ctx)?;
+        }
+
+        // Main commands.
+        let empty = HashMap::new();
+        let vars = self.interactions.get(key).unwrap_or(&empty);
+        for command in node.run.resolve() {
+            let interpolated = interpolate_with_defaults(command, node, vars);
+            exec_shell(&interpolated, &ctx)?;
+        }
+
+        // After hook.
+        if let Some(after) = &node.orch.after {
+            exec_shell(after, &ctx)?;
+        }
+
+        Ok(())
+    }
 }
 
-/// Interpolate a run string using only the node's default values.
+/// Interpolate a run string from interactive bindings and declared defaults.
 /// Used when a command is invoked via deps/steps (no ArgMatches available).
-fn interpolate_with_defaults(command: &str, node: &CommandNode) -> String {
+fn interpolate_with_defaults(
+    command: &str,
+    node: &CommandNode,
+    vars: &HashMap<String, String>,
+) -> String {
     interpolate::render(command, |p| match p {
         Placeholder::Passthrough | Placeholder::Conditional(_, _) => None,
         Placeholder::EnvVar(var_name) => {
@@ -145,6 +261,9 @@ fn interpolate_with_defaults(command: &str, node: &CommandNode) -> String {
             }
         }
         Placeholder::Variable(name) => {
+            if let Some(value) = vars.get(name) {
+                return Some(value.clone());
+            }
             if let Some(arg) = node.args.iter().find(|a| a.name == name) {
                 return arg.default.clone();
             }
@@ -279,100 +398,28 @@ impl Drop for ClaimGuard<'_> {
     }
 }
 
-/// Run a referenced task at most once per invocation.
-fn run_task(
-    key: &[String],
-    node: &CommandNode,
-    tree: &CommandTree,
-    registry: &Registry,
-    dry_run: bool,
-) -> Result<()> {
-    match registry.claim(key) {
-        Claim::Done => Ok(()),
-        Claim::Failed => Err(Error::Other(format!("task '{}' failed", key.join(" ")))),
-        Claim::Run => {
-            let mut guard = ClaimGuard {
-                registry,
-                key,
-                ok: false,
-            };
-            let result = exec_node_direct(node, tree, registry, dry_run);
-            guard.ok = result.is_ok();
-            result
-        }
-    }
-}
-
-/// Run all deps in parallel using scoped threads. Fails on first error.
-fn run_deps(
-    node: &CommandNode,
-    tree: &CommandTree,
-    registry: &Registry,
-    dry_run: bool,
-) -> Result<()> {
-    if node.orch.deps.is_empty() {
-        return Ok(());
-    }
-
-    std::thread::scope(|s| {
-        let handles: Vec<_> = node
-            .orch
-            .deps
-            .iter()
-            .map(|task_ref| {
-                s.spawn(|| {
-                    let (dep_node, _args) = tree.resolve_ref(task_ref).ok_or_else(|| {
-                        Error::Other(format!("dep '{}' not found", task_ref.display()))
-                    })?;
-                    run_task(&task_ref.tokens, dep_node, tree, registry, dry_run)
-                })
-            })
-            .collect();
-
-        for handle in handles {
-            handle
-                .join()
-                .map_err(|_| Error::Other("dependency thread panicked".to_string()))??;
-        }
-
-        Ok(())
-    })
-}
-
-/// Run all steps sequentially. Fails on first error.
-fn run_steps(
-    node: &CommandNode,
-    tree: &CommandTree,
-    registry: &Registry,
-    dry_run: bool,
-) -> Result<()> {
-    for task_ref in &node.orch.steps {
-        let (step_node, _args) = tree
-            .resolve_ref(task_ref)
-            .ok_or_else(|| Error::Other(format!("step '{}' not found", task_ref.display())))?;
-        run_task(&task_ref.tokens, step_node, tree, registry, dry_run)?;
-    }
-    Ok(())
-}
-
-/// Walk the ArgMatches subcommand chain to find the deepest matched CommandNode.
+/// Walk the ArgMatches subcommand chain to find the deepest matched
+/// CommandNode, along with its full command path.
 fn resolve<'a>(
     tree: &'a CommandTree,
     matches: &'a ArgMatches,
-) -> Option<(&'a CommandNode, &'a ArgMatches)> {
+) -> Option<(&'a CommandNode, &'a ArgMatches, Vec<String>)> {
     let (name, sub_matches) = matches.subcommand()?;
     let node = tree.commands.iter().find(|c| c.name == name)?;
-    resolve_node(node, sub_matches)
+    let mut path = vec![name.to_string()];
+    resolve_node(node, sub_matches, &mut path).map(|(n, m)| (n, m, path))
 }
 
 fn resolve_node<'a>(
     node: &'a CommandNode,
     matches: &'a ArgMatches,
+    path: &mut Vec<String>,
 ) -> Option<(&'a CommandNode, &'a ArgMatches)> {
     if let Some((child_name, child_matches)) = matches.subcommand()
         && let Some(child) = node.children.iter().find(|c| c.name == child_name)
     {
-        return resolve_node(child, child_matches);
+        path.push(child_name.to_string());
+        return resolve_node(child, child_matches, path);
     }
 
     if !node.is_runnable() {

@@ -131,3 +131,86 @@ fn multiple_prompts_with_yes() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("admin@localhost"));
 }
+
+#[test]
+fn dep_confirm_blocks_without_yes_non_tty() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        danger {
+            confirm "Really?"
+            run "echo DANGER-RAN"
+        }
+        caller {
+            deps "danger"
+            run "echo MAIN-RAN"
+        }
+        "#,
+    );
+
+    // A confirm-guarded task must never run silently when pulled in as a dep.
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "caller"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("DANGER-RAN"), "guarded dep ran:\n{stdout}");
+    assert!(!stdout.contains("MAIN-RAN"), "main ran:\n{stdout}");
+}
+
+#[test]
+fn dep_confirm_with_yes_runs() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        danger {
+            confirm "Really?"
+            run "echo DANGER-RAN"
+        }
+        caller {
+            deps "danger"
+            run "echo MAIN-RAN"
+        }
+        "#,
+    );
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "--yes", "caller"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("DANGER-RAN"));
+    assert!(stdout.contains("MAIN-RAN"));
+}
+
+#[test]
+fn step_prompt_default_interpolates_with_yes() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        greet {
+            prompt name "Who?" default="world"
+            run "echo HELLO-{name}"
+        }
+        wrapper {
+            steps "greet"
+            run "echo WRAPPED"
+        }
+        "#,
+    );
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "--yes", "wrapper"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("HELLO-world"),
+        "prompt default not used:\n{stdout}"
+    );
+    assert!(stdout.contains("WRAPPED"));
+}
