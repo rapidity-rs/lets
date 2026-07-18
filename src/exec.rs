@@ -7,6 +7,7 @@
 //! Delegates actual process spawning to [`crate::shell`] and placeholder
 //! interpolation to [`crate::interpolate`].
 
+use parking_lot::{Condvar, Mutex};
 use std::collections::HashMap;
 
 use clap::ArgMatches;
@@ -37,20 +38,16 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches) -> Result<()> {
     let yes = matches.get_flag("yes");
     let dry_run = matches.get_flag("dry-run");
     let ctx = ExecContext::from_node(node, &tree.config, dry_run)?;
+    let registry = Registry::new();
 
     // Collect interactive variable bindings.
     let interactive_vars = run_interactive(node, yes)?;
 
     // 1. Parallel deps.
-    run_deps(node, tree, dry_run)?;
+    run_deps(node, tree, &registry, dry_run)?;
 
     // 2. Sequential steps.
-    for task_ref in &node.orch.steps {
-        let (step_node, _args) = tree
-            .resolve_ref(task_ref)
-            .ok_or_else(|| Error::Other(format!("step '{}' not found", task_ref.display())))?;
-        exec_node_direct(step_node, tree, dry_run)?;
-    }
+    run_steps(node, tree, &registry, dry_run)?;
 
     // 3. Confirm (after interactive vars are collected, so interpolation works in the message).
     if let Some(confirm_msg) = &node.interactive.confirm
@@ -90,7 +87,12 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches) -> Result<()> {
 
 /// Execute a command node directly, without ArgMatches (for deps/steps invocation).
 /// Interpolates the run string using default values for args and flags.
-fn exec_node_direct(node: &CommandNode, tree: &CommandTree, dry_run: bool) -> Result<()> {
+fn exec_node_direct(
+    node: &CommandNode,
+    tree: &CommandTree,
+    registry: &Registry,
+    dry_run: bool,
+) -> Result<()> {
     // Warn if the command is deprecated.
     if let Some(msg) = &node.deprecated {
         if msg.is_empty() {
@@ -106,15 +108,10 @@ fn exec_node_direct(node: &CommandNode, tree: &CommandTree, dry_run: bool) -> Re
     let ctx = ExecContext::from_node(node, &tree.config, dry_run)?;
 
     // Parallel deps.
-    run_deps(node, tree, dry_run)?;
+    run_deps(node, tree, registry, dry_run)?;
 
     // Sequential steps.
-    for task_ref in &node.orch.steps {
-        let (step_node, _args) = tree
-            .resolve_ref(task_ref)
-            .ok_or_else(|| Error::Other(format!("step '{}' not found", task_ref.display())))?;
-        exec_node_direct(step_node, tree, dry_run)?;
-    }
+    run_steps(node, tree, registry, dry_run)?;
 
     // Before hook.
     if let Some(before) = &node.orch.before {
@@ -205,8 +202,114 @@ fn interpolate_simple(template: &str, vars: &HashMap<String, String>) -> String 
     })
 }
 
+/// Execution state of a task tracked by the [`Registry`].
+#[derive(Clone, Copy, PartialEq)]
+enum TaskState {
+    Running,
+    Done,
+    Failed,
+}
+
+/// Outcome of claiming a task for execution.
+enum Claim {
+    /// Caller owns execution and must report completion.
+    Run,
+    /// Task already completed successfully.
+    Done,
+    /// Task already ran and failed.
+    Failed,
+}
+
+/// Tracks tasks that have started or finished during this invocation so each
+/// unique task runs at most once, no matter how many places reference it.
+/// Concurrent claims of an in-flight task block until it settles.
+struct Registry {
+    states: Mutex<HashMap<Vec<String>, TaskState>>,
+    cv: Condvar,
+}
+
+impl Registry {
+    fn new() -> Self {
+        Registry {
+            states: Mutex::new(HashMap::new()),
+            cv: Condvar::new(),
+        }
+    }
+
+    /// Claim a task for execution, blocking while another thread runs it.
+    fn claim(&self, key: &[String]) -> Claim {
+        let mut states = self.states.lock();
+        loop {
+            match states.get(key) {
+                None => {
+                    states.insert(key.to_vec(), TaskState::Running);
+                    return Claim::Run;
+                }
+                Some(TaskState::Running) => {
+                    self.cv.wait(&mut states);
+                }
+                Some(TaskState::Done) => return Claim::Done,
+                Some(TaskState::Failed) => return Claim::Failed,
+            }
+        }
+    }
+
+    fn complete(&self, key: &[String], ok: bool) {
+        let state = if ok {
+            TaskState::Done
+        } else {
+            TaskState::Failed
+        };
+        self.states.lock().insert(key.to_vec(), state);
+        self.cv.notify_all();
+    }
+}
+
+/// Marks the claimed task as settled on drop, so waiters can never deadlock
+/// even if execution panics. Defaults to failure until told otherwise.
+struct ClaimGuard<'a> {
+    registry: &'a Registry,
+    key: &'a [String],
+    ok: bool,
+}
+
+impl Drop for ClaimGuard<'_> {
+    fn drop(&mut self) {
+        self.registry.complete(self.key, self.ok);
+    }
+}
+
+/// Run a referenced task at most once per invocation.
+fn run_task(
+    key: &[String],
+    node: &CommandNode,
+    tree: &CommandTree,
+    registry: &Registry,
+    dry_run: bool,
+) -> Result<()> {
+    match registry.claim(key) {
+        Claim::Done => Ok(()),
+        Claim::Failed => Err(Error::Other(format!("task '{}' failed", key.join(" ")))),
+        Claim::Run => {
+            let mut guard = ClaimGuard {
+                registry,
+                key,
+                ok: false,
+            };
+            let result = exec_node_direct(node, tree, registry, dry_run);
+            guard.ok = result.is_ok();
+            result
+        }
+    }
+}
+
 /// Run all deps in parallel using scoped threads. Fails on first error.
-fn run_deps(node: &CommandNode, tree: &CommandTree, dry_run: bool) -> Result<()> {
+fn run_deps(
+    node: &CommandNode,
+    tree: &CommandTree,
+    registry: &Registry,
+    dry_run: bool,
+) -> Result<()> {
     if node.orch.deps.is_empty() {
         return Ok(());
     }
@@ -221,7 +324,7 @@ fn run_deps(node: &CommandNode, tree: &CommandTree, dry_run: bool) -> Result<()>
                     let (dep_node, _args) = tree.resolve_ref(task_ref).ok_or_else(|| {
                         Error::Other(format!("dep '{}' not found", task_ref.display()))
                     })?;
-                    exec_node_direct(dep_node, tree, dry_run)
+                    run_task(&task_ref.tokens, dep_node, tree, registry, dry_run)
                 })
             })
             .collect();
@@ -234,6 +337,22 @@ fn run_deps(node: &CommandNode, tree: &CommandTree, dry_run: bool) -> Result<()>
 
         Ok(())
     })
+}
+
+/// Run all steps sequentially. Fails on first error.
+fn run_steps(
+    node: &CommandNode,
+    tree: &CommandTree,
+    registry: &Registry,
+    dry_run: bool,
+) -> Result<()> {
+    for task_ref in &node.orch.steps {
+        let (step_node, _args) = tree
+            .resolve_ref(task_ref)
+            .ok_or_else(|| Error::Other(format!("step '{}' not found", task_ref.display())))?;
+        run_task(&task_ref.tokens, step_node, tree, registry, dry_run)?;
+    }
+    Ok(())
 }
 
 /// Walk the ArgMatches subcommand chain to find the deepest matched CommandNode.

@@ -19,6 +19,7 @@ dialoguer = "0.12.0"
 dotenvy = "0.15"
 kdl = { version = "6", features = ["span"] }
 miette = { version = "7.6.0", features = ["fancy"] }
+parking_lot = "0.12.5"
 thiserror = "2"
 
 [target.'cfg(unix)'.dependencies]

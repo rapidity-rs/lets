@@ -374,3 +374,86 @@ fn multiple_run_stops_on_failure() {
         "third command should not run after failure"
     );
 }
+
+#[test]
+fn diamond_deps_run_once() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        shared "echo SHARED-RAN"
+        left { deps "shared"; run "echo LEFT" }
+        right { deps "shared"; run "echo RIGHT" }
+        all {
+            deps "left" "right"
+            run "echo ALL"
+        }
+        "#,
+    );
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "all"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.matches("SHARED-RAN").count(),
+        1,
+        "shared dep must run exactly once, got:\n{stdout}"
+    );
+    assert!(stdout.contains("LEFT"));
+    assert!(stdout.contains("RIGHT"));
+    assert!(stdout.contains("ALL"));
+}
+
+#[test]
+fn task_shared_between_deps_and_steps_runs_once() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        build "echo BUILD-RAN"
+        package { deps "build"; run "echo PACKAGE" }
+        ship {
+            deps "package"
+            steps "build"
+            run "echo SHIP"
+        }
+        "#,
+    );
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "ship"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.matches("BUILD-RAN").count(),
+        1,
+        "build must run exactly once, got:\n{stdout}"
+    );
+}
+
+#[test]
+fn shared_failing_dep_fails_all_dependents() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        broken "exit 1"
+        left { deps "broken"; run "echo LEFT" }
+        right { deps "broken"; run "echo RIGHT" }
+        all {
+            deps "left" "right"
+            run "echo ALL"
+        }
+        "#,
+    );
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "all"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("ALL"), "main must not run:\n{stdout}");
+}
