@@ -230,12 +230,13 @@ fn editing_included_config_triggers_restart() {
     fs::create_dir(root.join("src")).unwrap();
     fs::write(root.join("extra.kdl"), "helper \"echo hi\"\n").unwrap();
     let log = root.join("runs.log");
+    let stderr_file = fs::File::create(root.join("watch-stderr.log")).unwrap();
 
     let mut watcher = lets_bin()
         .args(["--file", path.to_str().unwrap(), "--watch", "build"])
         .current_dir(root)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(stderr_file)
         .spawn()
         .unwrap();
 
@@ -249,13 +250,20 @@ fn editing_included_config_triggers_restart() {
         wait_until(Duration::from_secs(10), || runs(&log) >= 1),
         "first run never happened"
     );
-    // Absorb setup-event stragglers, then take a baseline.
+    // Absorb setup-event stragglers.
     std::thread::sleep(Duration::from_secs(1));
-    let baseline = runs(&log);
 
-    // Editing an included config file must restart, like editing lets.kdl.
+    // Editing an included config file must restart the supervisor loop.
+    // (The task itself may then skip as up to date — its sources didn't
+    // change — so assert on the restart, not on task output.)
+    let restarts = |root: &std::path::Path| {
+        fs::read_to_string(root.join("watch-stderr.log"))
+            .map(|s| s.matches("restarting").count())
+            .unwrap_or(0)
+    };
+    let before = restarts(root);
     fs::write(root.join("extra.kdl"), "helper \"echo changed\"\n").unwrap();
-    let ok = wait_until(Duration::from_secs(10), || runs(&log) > baseline);
+    let ok = wait_until(Duration::from_secs(10), || restarts(root) > before);
     kill_tree(&mut watcher);
-    assert!(ok, "no rerun after include change");
+    assert!(ok, "no restart after include change");
 }
