@@ -161,6 +161,7 @@ fn parse_command_body(
         args: Vec::new(),
         flags: Vec::new(),
         aliases: Vec::new(),
+        run_policy: crate::tree::RunPolicy::default(),
         sources: Vec::new(),
         generates: Vec::new(),
         preconditions: Vec::new(),
@@ -192,6 +193,20 @@ fn parse_command_body(
                 }
                 "generates" => {
                     cmd.generates = parse_string_list(child);
+                }
+                "run-policy" => {
+                    let value = first_string_arg(child).unwrap_or_default();
+                    cmd.run_policy = match value.as_str() {
+                        "once" => crate::tree::RunPolicy::Once,
+                        "always" => crate::tree::RunPolicy::Always,
+                        other => {
+                            return Err(Error::ParseNoSpan {
+                                message: format!(
+                                    "invalid run-policy '{other}' (expected once or always)"
+                                ),
+                            });
+                        }
+                    };
                 }
                 "precondition" => {
                     let cmd_str = first_string_arg(child).ok_or_else(|| Error::ParseNoSpan {

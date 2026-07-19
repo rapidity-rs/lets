@@ -14,6 +14,7 @@ const KNOWN_KEYWORDS: &[&str] = &[
     "steps",
     "sources",
     "generates",
+    "run-policy",
     "precondition",
     "status",
     "before",
