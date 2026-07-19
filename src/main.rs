@@ -67,6 +67,7 @@ fn run() -> error::Result<()> {
             description: None,
             config: tree::Config::default(),
             commands: Vec::new(),
+            includes: Vec::new(),
         })
     })
     .var("LETS_COMPLETE")
@@ -98,6 +99,7 @@ fn run() -> error::Result<()> {
                 description: None,
                 config: tree::Config::default(),
                 commands: Vec::new(),
+                includes: Vec::new(),
             };
             (empty, None)
         }

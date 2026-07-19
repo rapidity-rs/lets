@@ -70,6 +70,8 @@ pub struct CommandTree {
     pub config: Config,
     /// Top-level commands.
     pub commands: Vec<CommandNode>,
+    /// Paths of files pulled in via `include`, recursively (for --watch).
+    pub includes: Vec<std::path::PathBuf>,
 }
 
 #[derive(Debug, Clone, Default)]

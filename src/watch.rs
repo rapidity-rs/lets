@@ -73,7 +73,13 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, config_path: &Path) -> Resu
     // Watchers report canonical paths (e.g. /private/var vs /var on macOS);
     // canonicalize so strip_prefix works when matching relative globs.
     let root = root.canonicalize().unwrap_or(root);
-    let config_name = config_path.file_name().map(std::ffi::OsStr::to_os_string);
+
+    // Config edits always trigger a restart (the child re-parses on start):
+    // the root file plus everything pulled in via `include`, recursively.
+    let config_files: Vec<PathBuf> = std::iter::once(config_path.to_path_buf())
+        .chain(tree.includes.iter().cloned())
+        .map(|p| p.canonicalize().unwrap_or(p))
+        .collect();
 
     let (tx, rx) = mpsc::channel::<Msg>();
 
@@ -97,6 +103,16 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, config_path: &Path) -> Resu
     debouncer
         .watch(&root, RecursiveMode::Recursive)
         .map_err(|e| Error::Other(format!("failed to watch '{}': {e}", root.display())))?;
+    // Included files can live outside the watch root; watch those directly.
+    for config_file in &config_files {
+        if !config_file.starts_with(&root) {
+            debouncer
+                .watch(config_file, RecursiveMode::NonRecursive)
+                .map_err(|e| {
+                    Error::Other(format!("failed to watch '{}': {e}", config_file.display()))
+                })?;
+        }
+    }
 
     // Ctrl-C / SIGTERM.
     let int_tx = tx.clone();
@@ -135,7 +151,7 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, config_path: &Path) -> Resu
         let restart = 'inner: loop {
             match rx.recv() {
                 Ok(Msg::Fs(paths)) => {
-                    let n = matching(&paths, &root, &globs, config_name.as_deref());
+                    let n = matching(&paths, &root, &globs, &config_files);
                     if n == 0 {
                         continue;
                     }
@@ -225,13 +241,8 @@ fn signal_group(pid: u32, force: bool) {
     }
 }
 
-/// Count event paths matching the sources globs (or the config file itself).
-fn matching(
-    paths: &[PathBuf],
-    root: &Path,
-    globs: &GlobSet,
-    config_name: Option<&std::ffi::OsStr>,
-) -> usize {
+/// Count event paths matching the sources globs (or any config file).
+fn matching(paths: &[PathBuf], root: &Path, globs: &GlobSet, config_files: &[PathBuf]) -> usize {
     paths
         .iter()
         .filter(|p| {
@@ -240,7 +251,7 @@ fn matching(
                 return true;
             }
             // Config edits always trigger: the child re-parses on restart.
-            relative.parent() == Some(Path::new("")) && Some(relative.as_os_str()) == config_name
+            config_files.iter().any(|c| c == *p)
         })
         .count()
 }
