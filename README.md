@@ -41,6 +41,7 @@ No code. No build step. Just a config file.
 | Shell completions | Auto-generated | No | Manual | Manual |
 | Nested subcommands | Yes | No | No | Yes |
 | Parallel deps | Yes | Yes | No | Yes |
+| Output grouping | Group, prefix | No | No | Yes |
 | Interactive prompts | Built-in | No | No | No |
 | Help text | Auto-generated | No | Yes | Yes |
 | Arg validation | Choices, types | No | No | No |
@@ -182,6 +183,27 @@ release {
     run "gh release create"
 }
 ```
+
+### Output modes
+
+Choose how parallel task output is presented, globally or per run:
+
+```kdl
+config {
+    output "prefixed"  // or "group" / "interleaved"
+}
+```
+
+```
+$ lets ci                     # config default
+$ lets --output group ci      # override per invocation
+```
+
+- `interleaved` (default) — tasks share the terminal; lines mix as they arrive
+- `group` — each task's output is buffered and printed as one labeled block when it finishes
+- `prefixed` — lines stream live, each tagged `[task]` with a color per task
+
+Failed tasks always flush their buffered output, so nothing is lost in `group` mode.
 
 ### Hooks
 
