@@ -1,6 +1,6 @@
 [package]
 name = "lets-cli"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "A declarative CLI builder — define commands in KDL, get a production-quality CLI instantly"
 license = "MIT"

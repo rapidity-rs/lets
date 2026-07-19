@@ -4,6 +4,43 @@ All notable changes to this project will be documented in this file.
 See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.2.0](https://github.com/rapidity-rs/lets/compare/59dc34dd84ce27015000c9bee51506c9b48713a9..v0.2.0) - 2026-07-19
+#### Features
+- (**docs**) rebuild documentation site with Astro Starlight - ([856e2af](https://github.com/rapidity-rs/lets/commit/856e2af5b8c7e65929819d4b24ab5d06671ad4ef)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**examples**) runnable example gallery wired into tests and docs (#17) - ([0e72dbf](https://github.com/rapidity-rs/lets/commit/0e72dbfe7b924bf8069b75ad688ea9a9f1d27f40)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**exec**) defer hooks with graceful interrupt handling (#19) - ([6ad0a7e](https://github.com/rapidity-rs/lets/commit/6ad0a7e2a945a839326fc8b3b30d73dc731947f8)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**exec**) precondition and status gates for tasks (#18) - ([3469a26](https://github.com/rapidity-rs/lets/commit/3469a26c28cccc24da56b4c59e9c4807fd8e38d6)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**exec**) run each task at most once per invocation - ([0841c04](https://github.com/rapidity-rs/lets/commit/0841c04706209c8f3f3185ad2d383a5fb2969d42)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**orch**) support arguments in deps and steps references - ([d2573da](https://github.com/rapidity-rs/lets/commit/d2573daad5e5e534d6ec6ed00e2f9a7eae16c0ce)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**output**) interleaved, group, and prefixed output modes - ([45fc9e9](https://github.com/rapidity-rs/lets/commit/45fc9e99aee77beaba1fe6e3980b0d5282d55190)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**watch**) re-run commands on source changes with --watch - ([76f57f9](https://github.com/rapidity-rs/lets/commit/76f57f906bbe8ec851eb06ff222c74daaf3a9897)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- add mise support - ([57aaa3f](https://github.com/rapidity-rs/lets/commit/57aaa3ffb8fa2c0f8a400e726607ab9eb292d5f2)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- add dependabot with a weekly cycle - ([75b2183](https://github.com/rapidity-rs/lets/commit/75b218354e1e881970b90393c98d4d91b50b1bb1)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- show help with self commands when no lets.kdl is present - ([c651172](https://github.com/rapidity-rs/lets/commit/c651172d1ab479573a9a69ac5e6d46ca8683671c)) - [@taylorFaucett](https://github.com/taylorFaucett)
+#### Bug Fixes
+- (**exec**) canonicalize task keys from parsed arguments (#21) - ([a3a9a31](https://github.com/rapidity-rs/lets/commit/a3a9a318a9b6871fa0132170665e9ec94469385d)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**exec**) collect prompts and confirms across the whole task graph - ([59939b4](https://github.com/rapidity-rs/lets/commit/59939b48326411d6259166538b5d04b3429d8384)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**interactive**) require explicit default for choose under --yes - ([87c3af5](https://github.com/rapidity-rs/lets/commit/87c3af5a58091e3b6087fb2db3f16ee96df67f51)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**watch**) restart when included config files change (#20) - ([d26f2c9](https://github.com/rapidity-rs/lets/commit/d26f2c934b4f1ab17fa3fb89161aca203e59b0b1)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**watch**) react only to file mutations, not reads (#6) - ([a818246](https://github.com/rapidity-rs/lets/commit/a818246e891098c01c449ad92a9f0f0593c77989)) - [@taylorFaucett](https://github.com/taylorFaucett)
+#### Documentation
+- (**readme**) document output modes - ([bc65dae](https://github.com/rapidity-rs/lets/commit/bc65daec1401e3bb3a90c0778bcda88ca70ad58d)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- document sources and watch mode - ([8e22d1f](https://github.com/rapidity-rs/lets/commit/8e22d1f986b0b883efc7fc7ef21ccbaa53c175dc)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- document run-once tasks, ref arguments, and confirm guards - ([16a327d](https://github.com/rapidity-rs/lets/commit/16a327d3595a161233271b98766157454387deb0)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- add MIT license and changelog - ([1f9ece9](https://github.com/rapidity-rs/lets/commit/1f9ece9fec48f6fca15b53bb48199bc52a9b2a09)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 4.6 (1M context)
+#### Continuous Integration
+- enforce conventional PR titles and commit messages - ([6e2cbcb](https://github.com/rapidity-rs/lets/commit/6e2cbcbd0e302c960724ca0b4f276acf685b458d)) - [@taylorFaucett](https://github.com/taylorFaucett)
+#### Refactoring
+- (**tree**) introduce TaskRef for deps/steps references - ([704ec53](https://github.com/rapidity-rs/lets/commit/704ec53132b7a4c9943499504f3817a14809832e)) - [@taylorFaucett](https://github.com/taylorFaucett)
+#### Miscellaneous Chores
+- (**changelog**) use cocogitto separator - ([6d88d49](https://github.com/rapidity-rs/lets/commit/6d88d4948ddc3b80493075b43f0d009ce06c436f)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**deps**) bump actions/upload-artifact from 4 to 7 (#4) - ([6c65bc5](https://github.com/rapidity-rs/lets/commit/6c65bc5b30e33aeb438157e56c0c9a10b7e2dd9a)) - dependabot[bot], dependabot[bot]
+- (**docs**) remove zensical documentation site - ([4e3e4d2](https://github.com/rapidity-rs/lets/commit/4e3e4d26c3b17d769880779df5dffae027e1368f)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- pin npm and cocogitto via mise - ([ce5cc0a](https://github.com/rapidity-rs/lets/commit/ce5cc0a0116eff97899c19bcd0e809be11028160)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- add cocogitto and pre-commit configuration - ([59dc34d](https://github.com/rapidity-rs/lets/commit/59dc34dd84ce27015000c9bee51506c9b48713a9)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 4.6 (1M context)
+
+- - -
+
 
 ## [v0.1.0](https://github.com/rapidity-rs/lets/compare/v0.1.0..v0.1.0) - 2026-04-04
 #### Features
