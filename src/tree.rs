@@ -184,7 +184,6 @@ pub struct CommandNode {
     /// Command name (used as the subcommand identifier).
     pub name: String,
     /// Source span of this node in the KDL file (for error reporting).
-    #[allow(dead_code)]
     pub span: miette::SourceSpan,
     /// Help text shown in `--help`.
     pub description: Option<String>,
@@ -202,6 +201,8 @@ pub struct CommandNode {
     pub flags: Vec<FlagDef>,
     /// Command aliases (e.g. `alias "t"` makes `lets t` work).
     pub aliases: Vec<String>,
+    /// File glob patterns this task depends on (used by --watch).
+    pub sources: Vec<String>,
     /// What to run.
     pub run: RunConfig,
     /// Task orchestration.

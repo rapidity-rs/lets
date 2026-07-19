@@ -12,6 +12,7 @@ const KNOWN_KEYWORDS: &[&str] = &[
     "flag",
     "deps",
     "steps",
+    "sources",
     "before",
     "after",
     "env",

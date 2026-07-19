@@ -11,10 +11,25 @@ use crate::error::{Error, Result};
 use crate::parse::SourceCtx;
 use crate::tree::{CommandNode, CommandTree};
 
-/// Validate the command tree: check refs resolve and no cycles exist.
+/// Validate the command tree: check refs resolve, no cycles exist, and
+/// source globs compile.
 pub fn validate(tree: &CommandTree, ctx: &SourceCtx) -> Result<()> {
     validate_refs(tree, &tree.commands, ctx)?;
     validate_no_cycles(tree, &tree.commands)?;
+    validate_sources(&tree.commands, ctx)?;
+    Ok(())
+}
+
+/// Check that every `sources` pattern is a valid glob.
+fn validate_sources(commands: &[CommandNode], ctx: &SourceCtx) -> Result<()> {
+    for cmd in commands {
+        for pattern in &cmd.sources {
+            if let Err(e) = globset::Glob::new(pattern) {
+                return Err(ctx.error(format!("invalid sources glob '{pattern}': {e}"), cmd.span));
+            }
+        }
+        validate_sources(&cmd.children, ctx)?;
+    }
     Ok(())
 }
 

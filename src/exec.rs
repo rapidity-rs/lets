@@ -461,7 +461,7 @@ impl Drop for ClaimGuard<'_> {
 
 /// Walk the ArgMatches subcommand chain to find the deepest matched
 /// CommandNode, along with its full command path.
-fn resolve<'a>(
+pub(crate) fn resolve<'a>(
     tree: &'a CommandTree,
     matches: &'a ArgMatches,
 ) -> Option<(&'a CommandNode, &'a ArgMatches, Vec<String>)> {

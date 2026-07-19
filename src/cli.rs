@@ -111,6 +111,13 @@ pub fn build_cli(tree: &CommandTree) -> Command {
                 .global(true),
         )
         .arg(
+            clap::Arg::new("watch")
+                .long("watch")
+                .help("Re-run the command when files in its sources change")
+                .action(clap::ArgAction::SetTrue)
+                .global(true),
+        )
+        .arg(
             clap::Arg::new("list")
                 .long("list")
                 .help("List all available commands")

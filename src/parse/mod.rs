@@ -158,6 +158,7 @@ fn parse_command_body(
         args: Vec::new(),
         flags: Vec::new(),
         aliases: Vec::new(),
+        sources: Vec::new(),
         run: RunConfig {
             commands: inline_cmd.into_iter().collect(),
             ..Default::default()
@@ -179,6 +180,9 @@ fn parse_command_body(
                 }
                 "long-description" => {
                     cmd.long_description = first_string_arg(child);
+                }
+                "sources" => {
+                    cmd.sources = parse_string_list(child);
                 }
                 "examples" => {
                     cmd.examples = first_string_arg(child);

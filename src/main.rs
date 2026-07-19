@@ -30,6 +30,7 @@ mod parse;
 mod shell;
 mod tree;
 mod validate;
+mod watch;
 
 use std::path::PathBuf;
 use std::process;
@@ -82,8 +83,11 @@ fn run() -> error::Result<()> {
         return commands::handle_self_setup();
     }
 
-    let (mut tree, config_found) = match resolve_config_path() {
-        Ok(path) => (parse::parse_file(&path)?, true),
+    let (mut tree, config_path) = match resolve_config_path() {
+        Ok(path) => {
+            let tree = parse::parse_file(&path)?;
+            (tree, Some(path))
+        }
         Err(error::Error::ConfigNotFound { .. }) => {
             // No config — build an empty tree so self commands still work.
             let empty = tree::CommandTree {
@@ -91,10 +95,11 @@ fn run() -> error::Result<()> {
                 config: tree::Config::default(),
                 commands: Vec::new(),
             };
-            (empty, false)
+            (empty, None)
         }
         Err(e) => return Err(e),
     };
+    let config_found = config_path.is_some();
     let mut clap_cmd = cli::build_cli(&tree);
 
     let matches = clap_cmd.clone().get_matches();
@@ -130,6 +135,13 @@ fn run() -> error::Result<()> {
             eprintln!("No lets.kdl found. Run `lets self init` to get started.");
         }
         return Ok(());
+    }
+
+    // --watch supervises re-runs; the child re-execs without the flag.
+    if matches.get_flag("watch")
+        && let Some(path) = &config_path
+    {
+        return watch::run(&tree, &matches, path);
     }
 
     exec::run(&tree, &matches)
