@@ -21,7 +21,7 @@ use crate::fingerprint;
 use crate::interpolate::{self, Placeholder};
 use crate::output::{OutputMode, TaskSink};
 use crate::shell::{self, ExecContext, exec_shell};
-use crate::tree::{CommandNode, CommandTree, FlagType};
+use crate::tree::{CommandNode, CommandTree, FlagType, RunPolicy};
 
 /// Resolve the matched subcommand from clap back to our tree and execute it.
 pub fn run(tree: &CommandTree, matches: &ArgMatches, project_root: &Path) -> Result<()> {
@@ -354,8 +354,12 @@ impl Orchestrator<'_> {
         Ok(())
     }
 
-    /// Run a referenced task at most once per invocation.
+    /// Run a referenced task — at most once per invocation unless its
+    /// run-policy is "always".
     fn run_task(&self, key: &[String], node: &CommandNode, args: &[String]) -> Result<()> {
+        if node.run_policy == RunPolicy::Always {
+            return self.exec_node(node, key, args);
+        }
         match self.registry.claim(key) {
             Claim::Done => Ok(()),
             Claim::Failed => Err(Error::Other(format!("task '{}' failed", key.join(" ")))),

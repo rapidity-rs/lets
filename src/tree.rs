@@ -206,6 +206,8 @@ pub struct CommandNode {
     pub flags: Vec<FlagDef>,
     /// Command aliases (e.g. `alias "t"` makes `lets t` work).
     pub aliases: Vec<String>,
+    /// Whether references to this task memoize (default) or always execute.
+    pub run_policy: RunPolicy,
     /// File glob patterns this task depends on (used by --watch and
     /// fingerprint-based up-to-date checks).
     pub sources: Vec<String>,
@@ -229,6 +231,16 @@ pub struct CommandNode {
     pub interactive: Interactive,
     /// Subcommands (if this is a group).
     pub children: Vec<CommandNode>,
+}
+
+/// When a referenced task may execute within one invocation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RunPolicy {
+    /// At most once per invocation: further references reuse the result.
+    #[default]
+    Once,
+    /// Every reference executes, bypassing run-once memoization.
+    Always,
 }
 
 /// A shell-command gate: the task refuses to run unless it exits 0.

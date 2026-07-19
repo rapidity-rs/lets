@@ -37,7 +37,7 @@ ci {
 
 `lets ci` builds once, not twice. If a shared task fails, every task depending on it fails.
 
-References with different arguments are different tasks: `deps "build fast"` and `deps "build slow"` each run.
+References with different arguments are different tasks: `deps "build fast"` and `deps "build slow"` each run. To opt a task out of memoization entirely, declare [`run-policy "always"`](/lets/reference/#run-policy) — every reference then executes.
 
 ### Nested references
 

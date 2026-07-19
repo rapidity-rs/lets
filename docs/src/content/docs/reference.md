@@ -273,6 +273,17 @@ choose environment "dev" "staging" "prod" default="staging"
 
 Under `--yes`, `choose` uses its `default` — or fails with a clear error if none is set. It never silently picks the first option.
 
+### `run-policy`
+
+Whether references to this task memoize. The default `"once"` runs the task
+at most once per invocation no matter how many places reference it;
+`"always"` executes every reference (e.g. an intentional
+`steps "clean" "build" "clean"`).
+
+```kdl
+run-policy "always"
+```
+
 ### `sources`
 
 File glob patterns this task depends on, relative to the directory containing

@@ -633,3 +633,81 @@ fn default_args_unify_with_bare_reference() {
         "default and explicit value must be one task:\n{stdout}"
     );
 }
+
+#[test]
+fn run_policy_always_executes_every_reference() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        clean {
+            run-policy "always"
+            run "echo CLEAN"
+        }
+        rebuild {
+            steps "clean" "build" "clean"
+            run "echo DONE"
+        }
+        build "echo BUILD"
+        "#,
+    );
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "rebuild"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.matches("CLEAN").count(),
+        2,
+        "run-policy always must execute each reference:\n{stdout}"
+    );
+}
+
+#[test]
+fn run_policy_always_in_diamond_runs_per_reference() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        stamp {
+            run-policy "always"
+            run "echo STAMP"
+        }
+        left { deps "stamp"; run "echo LEFT" }
+        right { deps "stamp"; run "echo RIGHT" }
+        all {
+            deps "left" "right"
+            run "echo ALL"
+        }
+        "#,
+    );
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "all"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.matches("STAMP").count(), 2, "{stdout}");
+}
+
+#[test]
+fn invalid_run_policy_rejected_at_load() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        clean {
+            run-policy "sometimes"
+            run "echo CLEAN"
+        }
+        "#,
+    );
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "clean"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("run-policy"), "got:\n{stderr}");
+}
