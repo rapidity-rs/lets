@@ -2,7 +2,9 @@
 //!
 //! Handles spawning shell commands (`sh -c` or configured shell), with support
 //! for timeout (via process groups and `SIGKILL`), retry with configurable delay,
-//! silent mode (capture stdout/stderr, show only on failure), and dry-run.
+//! and dry-run. Output is routed through a [`TaskSink`]: inherited stdio,
+//! line-prefixed streaming, or buffered blocks (which also implements silent
+//! mode — buffered output flushed only on failure).
 //!
 //! Uses [`nix`] on Unix for proper process group management: each child gets
 //! its own process group via `setpgid`, and timeouts kill the entire group
@@ -10,9 +12,11 @@
 
 use std::path::PathBuf;
 use std::process;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::error::{Error, Result};
+use crate::output::TaskSink;
 use crate::tree::{CommandNode, Config};
 
 /// Execution context derived from a CommandNode's settings.
@@ -24,7 +28,6 @@ pub(crate) struct ExecContext {
     pub timeout: Option<Duration>,
     pub retry_count: u32,
     pub retry_delay: Option<Duration>,
-    pub silent: bool,
 }
 
 impl ExecContext {
@@ -64,12 +67,11 @@ impl ExecContext {
             timeout: node.exec.timeout,
             retry_count: node.exec.retry_count.unwrap_or(0),
             retry_delay: node.exec.retry_delay,
-            silent: node.exec.silent,
         })
     }
 }
 
-pub(crate) fn exec_shell(command: &str, ctx: &ExecContext) -> Result<()> {
+pub(crate) fn exec_shell(command: &str, ctx: &ExecContext, sink: &TaskSink) -> Result<()> {
     if ctx.dry_run {
         println!("[dry-run] {command}");
         return Ok(());
@@ -79,7 +81,7 @@ pub(crate) fn exec_shell(command: &str, ctx: &ExecContext) -> Result<()> {
     let mut last_err = None;
 
     for attempt in 1..=attempts {
-        let result = exec_shell_once(command, ctx);
+        let result = exec_shell_once(command, ctx, sink);
         match result {
             Ok(()) => return Ok(()),
             Err(e) => {
@@ -96,7 +98,7 @@ pub(crate) fn exec_shell(command: &str, ctx: &ExecContext) -> Result<()> {
     last_err.map_or(Ok(()), Err)
 }
 
-fn exec_shell_once(command: &str, ctx: &ExecContext) -> Result<()> {
+fn exec_shell_once(command: &str, ctx: &ExecContext, sink: &TaskSink) -> Result<()> {
     let shell = ctx.shell.as_deref().unwrap_or("sh");
     let mut cmd = process::Command::new(shell);
     cmd.arg("-c").arg(command);
@@ -107,11 +109,6 @@ fn exec_shell_once(command: &str, ctx: &ExecContext) -> Result<()> {
 
     if let Some(dir) = &ctx.dir {
         cmd.current_dir(dir);
-    }
-
-    if ctx.silent {
-        cmd.stdout(process::Stdio::piped());
-        cmd.stderr(process::Stdio::piped());
     }
 
     if let Some(timeout) = ctx.timeout {
@@ -130,66 +127,110 @@ fn exec_shell_once(command: &str, ctx: &ExecContext) -> Result<()> {
                 });
             }
         }
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| Error::Other(format!("failed to spawn shell: {e}")))?;
-
-        let (tx, rx) = std::sync::mpsc::channel();
-        let pid = child.id();
-
-        std::thread::spawn(move || {
-            let result = child.wait();
-            // Send the result; if the receiver is gone (timeout), that's fine.
-            let _ = tx.send(result.map(|s| (s, child)));
-        });
-
-        match rx.recv_timeout(timeout) {
-            Ok(Ok((status, mut child))) => {
-                if ctx.silent && !status.success() {
-                    dump_child_output(&mut child);
-                }
-                return check_status(status);
-            }
-            Ok(Err(e)) => {
-                return Err(Error::Other(format!("failed to wait on command: {e}")));
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                // Kill the entire process group on timeout.
-                #[cfg(unix)]
-                {
-                    use nix::sys::signal::{self, Signal};
-                    use nix::unistd::Pid;
-                    let _ = signal::killpg(Pid::from_raw(pid as i32), Signal::SIGKILL);
-                }
-                #[cfg(not(unix))]
-                {
-                    let _ = pid;
-                }
-                return Err(Error::Other(format!("command timed out after {timeout:?}")));
-            }
-            Err(e) => {
-                return Err(Error::Other(format!("wait channel error: {e}")));
-            }
-        }
+        let _ = timeout;
     }
 
-    if ctx.silent {
-        let output = cmd
-            .output()
-            .map_err(|e| Error::Other(format!("failed to spawn shell: {e}")))?;
-        if !output.status.success() {
-            use std::io::Write;
-            std::io::stdout().write_all(&output.stdout).ok();
-            std::io::stderr().write_all(&output.stderr).ok();
-        }
-        return check_status(output.status);
+    if sink.captures() {
+        exec_captured(cmd, ctx, sink)
+    } else {
+        exec_inherited(cmd, ctx)
     }
+}
 
-    let status = cmd
-        .status()
+/// Run with inherited stdio (interleaved output).
+fn exec_inherited(mut cmd: process::Command, ctx: &ExecContext) -> Result<()> {
+    let Some(timeout) = ctx.timeout else {
+        let status = cmd
+            .status()
+            .map_err(|e| Error::Other(format!("failed to spawn shell: {e}")))?;
+        return check_status(status);
+    };
+
+    let mut child = cmd
+        .spawn()
         .map_err(|e| Error::Other(format!("failed to spawn shell: {e}")))?;
 
+    let (tx, rx) = std::sync::mpsc::channel();
+    let pid = child.id();
+
+    std::thread::spawn(move || {
+        let result = child.wait();
+        // Send the result; if the receiver is gone (timeout), that's fine.
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(status)) => check_status(status),
+        Ok(Err(e)) => Err(Error::Other(format!("failed to wait on command: {e}"))),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            kill_process_group(pid);
+            Err(Error::Other(format!("command timed out after {timeout:?}")))
+        }
+        Err(e) => Err(Error::Other(format!("wait channel error: {e}"))),
+    }
+}
+
+/// Run with stdout+stderr merged into one pipe, drained through the sink.
+fn exec_captured(mut cmd: process::Command, ctx: &ExecContext, sink: &TaskSink) -> Result<()> {
+    let (reader, writer) =
+        std::io::pipe().map_err(|e| Error::Other(format!("failed to create output pipe: {e}")))?;
+    let writer_clone = writer
+        .try_clone()
+        .map_err(|e| Error::Other(format!("failed to clone output pipe: {e}")))?;
+    cmd.stdout(writer);
+    cmd.stderr(writer_clone);
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| Error::Other(format!("failed to spawn shell: {e}")))?;
+    // Command retains its Stdio handles for potential respawn; drop them so
+    // the pipe sees EOF when the child exits.
+    drop(cmd);
+
+    // Watchdog thread kills the process group at the deadline while this
+    // thread drains the pipe.
+    let watchdog = ctx.timeout.map(|timeout| {
+        let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<()>();
+        let timed_out = std::sync::Arc::new(AtomicBool::new(false));
+        let flag = timed_out.clone();
+        let pid = child.id();
+        std::thread::spawn(move || {
+            if cancel_rx.recv_timeout(timeout).is_err() {
+                flag.store(true, Ordering::SeqCst);
+                kill_process_group(pid);
+            }
+        });
+        (cancel_tx, timed_out)
+    });
+
+    sink.consume(reader);
+
+    let status = child
+        .wait()
+        .map_err(|e| Error::Other(format!("failed to wait on command: {e}")))?;
+
+    if let Some((cancel_tx, timed_out)) = watchdog {
+        let _ = cancel_tx.send(());
+        if timed_out.load(Ordering::SeqCst) {
+            let timeout = ctx.timeout.unwrap_or_default();
+            return Err(Error::Other(format!("command timed out after {timeout:?}")));
+        }
+    }
+
     check_status(status)
+}
+
+fn kill_process_group(pid: u32) {
+    #[cfg(unix)]
+    {
+        use nix::sys::signal::{self, Signal};
+        use nix::unistd::Pid;
+        let _ = signal::killpg(Pid::from_raw(pid as i32), Signal::SIGKILL);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+    }
 }
 
 fn check_status(status: process::ExitStatus) -> Result<()> {
@@ -200,19 +241,5 @@ fn check_status(status: process::ExitStatus) -> Result<()> {
             Some(code) => Err(Error::CommandFailed { code }),
             None => Err(Error::CommandSignaled),
         }
-    }
-}
-
-fn dump_child_output(child: &mut process::Child) {
-    use std::io::{Read, Write};
-    if let Some(ref mut stdout) = child.stdout {
-        let mut buf = Vec::new();
-        stdout.read_to_end(&mut buf).ok();
-        std::io::stdout().write_all(&buf).ok();
-    }
-    if let Some(ref mut stderr) = child.stderr {
-        let mut buf = Vec::new();
-        stderr.read_to_end(&mut buf).ok();
-        std::io::stderr().write_all(&buf).ok();
     }
 }

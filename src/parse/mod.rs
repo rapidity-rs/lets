@@ -89,7 +89,7 @@ pub(crate) fn parse_source(source: &str, path: &Path) -> Result<CommandTree> {
                 tree.description = first_string_arg(node);
             }
             "config" => {
-                tree.config = parse_config(node);
+                tree.config = parse_config(node)?;
             }
             "include" => {
                 if let Some(include_path_str) = first_string_arg(node) {

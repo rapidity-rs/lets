@@ -78,6 +78,8 @@ pub struct Config {
     pub sorted: bool,
     /// Default shell for all commands (can be overridden per-command).
     pub shell: Option<String>,
+    /// How output from tasks run via deps/steps is presented.
+    pub output: crate::output::OutputMode,
 }
 
 /// Configuration for what command to run and on which platforms.

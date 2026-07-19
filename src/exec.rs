@@ -10,12 +10,14 @@
 //! interpolation to [`crate::interpolate`].
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use clap::ArgMatches;
 use parking_lot::{Condvar, Mutex};
 
 use crate::error::{Error, Result};
 use crate::interpolate::{self, Placeholder};
+use crate::output::{OutputMode, TaskSink};
 use crate::shell::{ExecContext, exec_shell};
 use crate::tree::{CommandNode, CommandTree, FlagType};
 
@@ -38,6 +40,8 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches) -> Result<()> {
         tree,
         registry: Registry::new(),
         interactions: HashMap::new(),
+        mode: tree.config.output,
+        color_seq: AtomicUsize::new(0),
         dry_run,
     };
     let mut visited = HashSet::new();
@@ -55,23 +59,26 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches) -> Result<()> {
     // 2. Sequential steps (run-once).
     orch.run_steps(node)?;
 
-    // 3. Before hook.
-    if let Some(before) = &node.orch.before {
-        exec_shell(before, &ctx)?;
-    }
+    // 3. Hooks and main commands. The root command is never prefixed or
+    // grouped (it may be interactive); silent still buffers until failure.
+    let sink = TaskSink::for_root(node.exec.silent);
+    let result = (|| -> Result<()> {
+        if let Some(before) = &node.orch.before {
+            exec_shell(before, &ctx, &sink)?;
+        }
 
-    // 4. Main commands (with interpolation from clap matches + interactive vars).
-    for command in node.run.resolve() {
-        let interpolated = interpolate_cmd(command, node, node_matches, &interactive_vars);
-        exec_shell(&interpolated, &ctx)?;
-    }
+        for command in node.run.resolve() {
+            let interpolated = interpolate_cmd(command, node, node_matches, &interactive_vars);
+            exec_shell(&interpolated, &ctx, &sink)?;
+        }
 
-    // 5. After hook.
-    if let Some(after) = &node.orch.after {
-        exec_shell(after, &ctx)?;
-    }
-
-    Ok(())
+        if let Some(after) = &node.orch.after {
+            exec_shell(after, &ctx, &sink)?;
+        }
+        Ok(())
+    })();
+    sink.finish(result.is_err());
+    result
 }
 
 /// Print a deprecation warning if the node is marked deprecated.
@@ -94,6 +101,10 @@ struct Orchestrator<'a> {
     registry: Registry,
     /// Interactive variable bindings collected up front, keyed by task key.
     interactions: HashMap<Vec<String>, HashMap<String, String>>,
+    /// Output presentation for tasks run via deps/steps.
+    mode: OutputMode,
+    /// Monotonic counter assigning label colors.
+    color_seq: AtomicUsize,
     dry_run: bool,
 }
 
@@ -219,13 +230,32 @@ impl Orchestrator<'_> {
 
         let ctx = ExecContext::from_node(node, &self.tree.config, self.dry_run)?;
 
-        // Nested deps and steps.
+        // Nested deps and steps run first; they present through their own sinks.
         self.run_deps(node)?;
         self.run_steps(node)?;
 
+        // This task's own output (hooks + run commands) goes through one sink
+        // so grouped mode flushes it as a single block.
+        let label = key.join(" ");
+        let color_seq = self.color_seq.fetch_add(1, Ordering::Relaxed);
+        let sink = TaskSink::for_task(self.mode, &label, node.exec.silent, color_seq);
+        let result = self.exec_node_commands(node, key, args, &ctx, &sink);
+        sink.finish(result.is_err());
+        result
+    }
+
+    /// Hooks and run commands of a single task, routed through its sink.
+    fn exec_node_commands(
+        &self,
+        node: &CommandNode,
+        key: &[String],
+        args: &[String],
+        ctx: &ExecContext,
+        sink: &TaskSink,
+    ) -> Result<()> {
         // Before hook.
         if let Some(before) = &node.orch.before {
-            exec_shell(before, &ctx)?;
+            exec_shell(before, ctx, sink)?;
         }
 
         // Main commands.
@@ -234,7 +264,7 @@ impl Orchestrator<'_> {
         if args.is_empty() {
             for command in node.run.resolve() {
                 let interpolated = interpolate_with_defaults(command, node, vars);
-                exec_shell(&interpolated, &ctx)?;
+                exec_shell(&interpolated, ctx, sink)?;
             }
         } else {
             // Validated at load time; parse again here to get real ArgMatches.
@@ -249,13 +279,13 @@ impl Orchestrator<'_> {
                 })?;
             for command in node.run.resolve() {
                 let interpolated = interpolate_cmd(command, node, &matches, vars);
-                exec_shell(&interpolated, &ctx)?;
+                exec_shell(&interpolated, ctx, sink)?;
             }
         }
 
         // After hook.
         if let Some(after) = &node.orch.after {
-            exec_shell(after, &ctx)?;
+            exec_shell(after, ctx, sink)?;
         }
 
         Ok(())

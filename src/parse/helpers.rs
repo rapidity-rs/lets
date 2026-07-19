@@ -75,7 +75,7 @@ pub(super) fn parse_duration(s: &str) -> std::result::Result<Duration, String> {
 }
 
 /// Parse the `config` block into a `Config`.
-pub(super) fn parse_config(node: &KdlNode) -> Config {
+pub(super) fn parse_config(node: &KdlNode) -> Result<Config> {
     let mut config = Config::default();
     if let Some(children) = node.children() {
         for child in children.nodes() {
@@ -86,11 +86,15 @@ pub(super) fn parse_config(node: &KdlNode) -> Config {
                 "shell" => {
                     config.shell = first_string_arg(child);
                 }
+                "output" => {
+                    let value = first_string_arg(child).unwrap_or_default();
+                    config.output = value.parse().map_err(Error::Other)?;
+                }
                 _ => {}
             }
         }
     }
-    config
+    Ok(config)
 }
 
 /// Parse environment variables from an `env` node.

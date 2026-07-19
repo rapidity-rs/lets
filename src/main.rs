@@ -25,6 +25,7 @@ mod discover;
 mod error;
 mod exec;
 mod interpolate;
+mod output;
 mod parse;
 mod shell;
 mod tree;
@@ -81,7 +82,7 @@ fn run() -> error::Result<()> {
         return commands::handle_self_setup();
     }
 
-    let (tree, config_found) = match resolve_config_path() {
+    let (mut tree, config_found) = match resolve_config_path() {
         Ok(path) => (parse::parse_file(&path)?, true),
         Err(error::Error::ConfigNotFound { .. }) => {
             // No config — build an empty tree so self commands still work.
@@ -97,6 +98,11 @@ fn run() -> error::Result<()> {
     let mut clap_cmd = cli::build_cli(&tree);
 
     let matches = clap_cmd.clone().get_matches();
+
+    // --output overrides the config's output mode.
+    if let Some(mode) = matches.get_one::<String>("output") {
+        tree.config.output = mode.parse().map_err(error::Error::Other)?;
+    }
 
     // Built-in flags.
     if matches.get_flag("list") {

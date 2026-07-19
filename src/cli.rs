@@ -100,6 +100,17 @@ pub fn build_cli(tree: &CommandTree) -> Command {
                 .global(true),
         )
         .arg(
+            clap::Arg::new("output")
+                .long("output")
+                .help("Output mode for tasks run via deps/steps")
+                .value_parser(clap::builder::PossibleValuesParser::new([
+                    "interleaved",
+                    "group",
+                    "prefixed",
+                ]))
+                .global(true),
+        )
+        .arg(
             clap::Arg::new("list")
                 .long("list")
                 .help("List all available commands")
