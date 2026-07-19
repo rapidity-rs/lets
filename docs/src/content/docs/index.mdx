@@ -1,0 +1,97 @@
+---
+title: lets
+description: A declarative CLI builder. Define commands in KDL, get a production-quality CLI instantly.
+template: splash
+hero:
+  tagline: Define commands in KDL, get a production-quality CLI instantly. No code. No build step. Just a config file.
+  actions:
+    - text: Get started
+      link: /lets/getting-started/
+      icon: right-arrow
+    - text: View on GitHub
+      link: https://github.com/rapidity-rs/lets
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+```kdl
+description "My project tasks"
+
+build "cargo build"
+test "cargo test"
+lint "cargo clippy -- -D warnings"
+
+db {
+    description "Database commands"
+    migrate "diesel migration run"
+    reset "diesel database reset"
+}
+```
+
+```
+$ lets db migrate
+Running migration...
+```
+
+<CardGrid stagger>
+  <Card title="A real CLI, not a script wrapper" icon="rocket">
+    Colored help at every level, typo suggestions, tab completion for five
+    shells, typed arguments with choices and validation — the UX of a
+    hand-written clap CLI from a config file you write in a minute.
+  </Card>
+  <Card title="Fast" icon="approve-check">
+    A single native binary. Cold start in milliseconds — no interpreter
+    startup tax on every command.
+  </Card>
+  <Card title="Parallel orchestration" icon="setting">
+    Dependencies run in parallel and at most once per invocation. Group or
+    prefix their output. Steps run in sequence. Failures stop the pipeline.
+  </Card>
+  <Card title="Interactive when you want it" icon="comment">
+    Confirmations, text prompts, and selection menus built in — all
+    bypassable with <code>--yes</code> for CI.
+  </Card>
+</CardGrid>
+
+## Why lets?
+
+Most task runners make you choose between simplicity and power. Simple tools
+like `make` give you targets but no help text, no typed arguments, no
+completions. Powerful tools require learning a scripting language or a complex
+YAML schema.
+
+|                     | lets           | Make     | just    | task    |
+| ------------------- | -------------- | -------- | ------- | ------- |
+| Config format       | KDL            | Makefile | Justfile| YAML    |
+| Typed args & flags  | Yes            | No       | Limited | Limited |
+| Shell completions   | Auto-generated | No       | Manual  | Manual  |
+| Nested subcommands  | Yes            | No       | No      | Yes     |
+| Parallel deps       | Yes            | Yes      | No      | Yes     |
+| Output grouping     | Group, prefix  | No       | No      | Yes     |
+| Interactive prompts | Built-in       | No       | No      | No      |
+| Help text           | Auto-generated | No       | Yes     | Yes     |
+| Arg validation      | Choices, types | No       | No      | No      |
+
+## Install
+
+```sh
+cargo install lets-cli
+```
+
+## Quick start
+
+```sh
+# Generate a starter lets.kdl for your project
+lets self init
+
+# Set up shell completions (add to your .zshrc/.bashrc)
+eval "$(lets self setup)"
+
+# See what's available
+lets --list
+
+# Run a command
+lets build
+```

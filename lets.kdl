@@ -59,13 +59,13 @@ doc {
     site {
         description "Build the user-facing documentation site"
         dir "docs"
-        run "uv run zensical build"
+        run "npm run build"
     }
 
     serve {
         description "Preview documentation site locally"
         dir "docs"
-        run "uv run zensical serve"
+        run "npm run dev"
     }
 }
 
