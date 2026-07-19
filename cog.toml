@@ -12,6 +12,10 @@ pre_bump_hooks = [
 post_bump_hooks = [
   "git push",
   "git push origin v{{version}}",
+  # Nudge the Homebrew tap once the release assets exist (~5 min build),
+  # instead of waiting for the tap's nightly cron. Backgrounded so the
+  # bump command returns immediately; the cron remains the fallback.
+  "sh -c '(sleep 300 && gh workflow run bump-lets.yml --repo rapidity-rs/homebrew-tap) >/dev/null 2>&1 &'",
 ]
 
 [changelog]
