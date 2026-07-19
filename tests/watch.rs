@@ -214,3 +214,48 @@ fn invalid_sources_glob_rejected_at_load() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("invalid sources glob"), "got:\n{stderr}");
 }
+
+#[test]
+fn editing_included_config_triggers_restart() {
+    let (dir, path) = with_temp_kdl(
+        r#"
+        include "extra.kdl"
+        build {
+            sources "src/**"
+            run "sh -c 'echo RUN >> runs.log'"
+        }
+        "#,
+    );
+    let root = dir.path();
+    fs::create_dir(root.join("src")).unwrap();
+    fs::write(root.join("extra.kdl"), "helper \"echo hi\"\n").unwrap();
+    let log = root.join("runs.log");
+
+    let mut watcher = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "--watch", "build"])
+        .current_dir(root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+
+    let runs = |log: &std::path::Path| {
+        fs::read_to_string(log)
+            .map(|s| s.matches("RUN").count())
+            .unwrap_or(0)
+    };
+
+    assert!(
+        wait_until(Duration::from_secs(10), || runs(&log) >= 1),
+        "first run never happened"
+    );
+    // Absorb setup-event stragglers, then take a baseline.
+    std::thread::sleep(Duration::from_secs(1));
+    let baseline = runs(&log);
+
+    // Editing an included config file must restart, like editing lets.kdl.
+    fs::write(root.join("extra.kdl"), "helper \"echo changed\"\n").unwrap();
+    let ok = wait_until(Duration::from_secs(10), || runs(&log) > baseline);
+    kill_tree(&mut watcher);
+    assert!(ok, "no rerun after include change");
+}

@@ -78,6 +78,7 @@ pub(crate) fn parse_source(source: &str, path: &Path) -> Result<CommandTree> {
         description: None,
         config: Config::default(),
         commands: Vec::new(),
+        includes: Vec::new(),
     };
 
     let base_dir = path.parent().unwrap_or(Path::new("."));
@@ -96,6 +97,8 @@ pub(crate) fn parse_source(source: &str, path: &Path) -> Result<CommandTree> {
                     let include_path = base_dir.join(&include_path_str);
                     let included = parse_file(&include_path)?;
                     tree.commands.extend(included.commands);
+                    tree.includes.push(include_path);
+                    tree.includes.extend(included.includes);
                 }
             }
             "cmd" => {
