@@ -272,6 +272,29 @@ included). Invalid globs are rejected at load time.
 sources "src/**/*.rs" "Cargo.toml"
 ```
 
+### `precondition`
+
+A shell command that must exit successfully for the task to run; checked
+before the task's deps. Repeatable — all must pass. The optional `message`
+replaces the command in the error shown to the user. Runs with the task's
+`shell`, `env`, and `dir`; produces no output. Printed but not evaluated
+under `--dry-run`.
+
+```kdl
+precondition "test -f .env" message="Copy .env.example to .env first"
+```
+
+### `status`
+
+Shell commands that decide whether the task is already up to date: when ALL
+exit successfully, the task's hooks and `run` commands are skipped (deps and
+steps still run first). Bypassed by `--force`; printed but not evaluated
+under `--dry-run`.
+
+```kdl
+status "test -d node_modules"
+```
+
 ### `alias`
 
 Alternative names for this command.

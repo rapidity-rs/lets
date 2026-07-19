@@ -138,6 +138,43 @@ Deploy complete!
 
 Hooks are simple shell strings — they don't support arguments or interpolation from the command's args/flags (use `run` for that).
 
+## Gating tasks (`precondition` / `status`)
+
+Two stateless gates control whether a task runs at all.
+
+**`precondition`** fails the task — before any of its deps run — unless a
+shell command exits successfully. Give it a `message` to tell the user how
+to fix it:
+
+```kdl
+deploy {
+    precondition "test -f .env" message="Copy .env.example to .env first"
+    precondition "git diff --quiet" message="Commit or stash your changes"
+    run "scripts/deploy.sh"
+}
+```
+
+**`status`** skips the task when it is already done: if **all** status
+commands exit successfully, the task is up to date and its hooks and `run`
+commands don't execute (deps still run first — they may be what satisfies
+the check):
+
+```kdl
+setup {
+    status "test -d node_modules"
+    run "npm install"
+}
+```
+
+```
+$ lets setup
+'setup' is up to date
+```
+
+Use `--force` to run anyway. Gate commands execute with the task's `env`,
+`dir`, and `shell`, and produce no output of their own. Under `--dry-run`
+they are printed but not evaluated.
+
 ## Output modes
 
 When several tasks run via `deps` or `steps`, control how their output reaches the terminal with `output` in the top-level `config` block:
@@ -165,11 +202,13 @@ lets --output group ci
 For any command, the complete execution order is:
 
 1. **Interactive** — every `choose`, `prompt`, and `confirm` across the whole task graph (deps and steps targets included) runs serially up front, before anything executes. A declined confirmation aborts the run before any work starts. A confirm-guarded task pulled in as a dep still prompts; without a TTY the run fails instead of silently skipping the guard. See [Interactive](/lets/interactive/).
-2. **`deps`** — parallel dependencies (run-once)
-3. **`steps`** — sequential steps (run-once)
-4. **`before`** hook
-5. **`run`** commands (sequential, with interpolation)
-6. **`after`** hook
+2. **`precondition`** — all must pass, or the task (and its deps) never starts
+3. **`deps`** — parallel dependencies (run-once)
+4. **`steps`** — sequential steps (run-once)
+5. **`status`** — if all checks pass, the task is up to date and stops here
+6. **`before`** hook
+7. **`run`** commands (sequential, with interpolation)
+8. **`after`** hook
 
 ## Real-world example
 

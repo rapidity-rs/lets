@@ -1,14 +1,33 @@
-// Resilience and polish: timeout, retry, silent, hidden commands,
+// Resilience and polish: gates, timeout, retry, silent, hidden commands,
 // deprecation, multiple run commands, and rich help text.
 //
 // Try:
+//   lets init            (skipped once .initialized exists; --force reruns)
+//   lets guarded         (fails until you create allow.txt)
 //   lets health-check
 //   lets deploy
 //   lets old-deploy          (prints a deprecation warning)
 //   lets ship --help         (long description + examples in help)
 //   lets --list              (setup-db is hidden from this list)
 
-description "Advanced — timeouts, retries, and help polish"
+description "Advanced — gates, timeouts, retries, and help polish"
+
+// `status`: when every check exits 0 the task is up to date and skipped.
+// Deps still run first. Use --force to run anyway.
+init {
+    description "One-time project setup"
+    status "test -f .initialized"
+    run "echo setting up project"
+    run "echo run: touch .initialized"
+}
+
+// `precondition`: refuse to run (before deps!) unless a check passes,
+// with a message telling the user how to fix it.
+guarded {
+    description "Only runs when allow.txt exists"
+    precondition "test -f allow.txt" message="Create allow.txt to enable this task"
+    run "echo allowed"
+}
 
 // Kill after a deadline; retry with a delay between attempts.
 health-check {

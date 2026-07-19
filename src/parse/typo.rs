@@ -13,6 +13,8 @@ const KNOWN_KEYWORDS: &[&str] = &[
     "deps",
     "steps",
     "sources",
+    "precondition",
+    "status",
     "before",
     "after",
     "env",

@@ -243,3 +243,27 @@ fn check_status(status: process::ExitStatus) -> Result<()> {
         }
     }
 }
+
+/// Run a gate command (precondition/status) quietly with the task's
+/// shell/env/dir. Returns whether it exited successfully.
+pub(crate) fn check_shell(command: &str, ctx: &ExecContext) -> Result<bool> {
+    let shell = ctx.shell.as_deref().unwrap_or("sh");
+    let mut cmd = process::Command::new(shell);
+    cmd.arg("-c")
+        .arg(command)
+        .stdin(process::Stdio::null())
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null());
+
+    if !ctx.env.is_empty() {
+        cmd.envs(ctx.env.iter().map(|(k, v)| (k, v)));
+    }
+    if let Some(dir) = &ctx.dir {
+        cmd.current_dir(dir);
+    }
+
+    let status = cmd
+        .status()
+        .map_err(|e| Error::Other(format!("failed to run check '{command}': {e}")))?;
+    Ok(status.success())
+}
