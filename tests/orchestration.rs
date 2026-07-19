@@ -573,3 +573,63 @@ fn dep_with_invalid_argument_fails_at_load() {
         "must fail before executing:\n{stdout}"
     );
 }
+
+#[test]
+fn reordered_flags_are_one_task() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        emit {
+            flag alpha type="string" default="x"
+            flag beta type="string" default="y"
+            run "echo EMIT-{alpha}-{beta}"
+        }
+        all {
+            steps "emit --alpha 1 --beta 2" "emit --beta 2 --alpha 1"
+            run "echo ALL"
+        }
+        "#,
+    );
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "all"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.matches("EMIT-1-2").count(),
+        1,
+        "reordered flags must memoize as one task:\n{stdout}"
+    );
+}
+
+#[test]
+fn default_args_unify_with_bare_reference() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        emit {
+            arg word default="hi"
+            run "echo EMIT-{word}"
+        }
+        all {
+            steps "emit" "emit hi"
+            run "echo ALL"
+        }
+        "#,
+    );
+
+    // `emit` with the default and `emit hi` spelled out are the same task.
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "all"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.matches("EMIT-hi").count(),
+        1,
+        "default and explicit value must be one task:\n{stdout}"
+    );
+}
