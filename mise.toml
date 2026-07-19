@@ -1,2 +1,5 @@
 [tools]
+cocogitto = "latest"
+npm = "latest"
 rust = "latest"
+rust-analyzer = "latest"
