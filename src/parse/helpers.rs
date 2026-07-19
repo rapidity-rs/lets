@@ -90,6 +90,21 @@ pub(super) fn parse_config(node: &KdlNode) -> Result<Config> {
                     let value = first_string_arg(child).unwrap_or_default();
                     config.output = value.parse().map_err(Error::Other)?;
                 }
+                "jobs" => {
+                    let value = child
+                        .entries()
+                        .iter()
+                        .find(|e| e.name().is_none())
+                        .and_then(|e| e.value().as_integer());
+                    match value {
+                        Some(n) if n >= 1 => config.jobs = Some(n as usize),
+                        _ => {
+                            return Err(Error::Other(
+                                "config jobs must be an integer >= 1".to_string(),
+                            ));
+                        }
+                    }
+                }
                 _ => {}
             }
         }
