@@ -20,12 +20,16 @@ pub fn validate(tree: &CommandTree, ctx: &SourceCtx) -> Result<()> {
     Ok(())
 }
 
-/// Check that every `sources` pattern is a valid glob.
+/// Check that every `sources`/`generates` pattern is a valid glob.
 fn validate_sources(commands: &[CommandNode], ctx: &SourceCtx) -> Result<()> {
     for cmd in commands {
-        for pattern in &cmd.sources {
-            if let Err(e) = globset::Glob::new(pattern) {
-                return Err(ctx.error(format!("invalid sources glob '{pattern}': {e}"), cmd.span));
+        for (kind, patterns) in [("sources", &cmd.sources), ("generates", &cmd.generates)] {
+            for pattern in patterns {
+                if let Err(e) = globset::Glob::new(pattern) {
+                    return Err(
+                        ctx.error(format!("invalid {kind} glob '{pattern}': {e}"), cmd.span)
+                    );
+                }
             }
         }
         validate_sources(&cmd.children, ctx)?;

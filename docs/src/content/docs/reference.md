@@ -276,12 +276,27 @@ Under `--yes`, `choose` uses its `default` — or fails with a clear error if no
 ### `sources`
 
 File glob patterns this task depends on, relative to the directory containing
-`lets.kdl`. Used by [`--watch`](/lets/watch/) to re-run the command on
-changes; patterns are collected from the whole task graph (deps and steps
-included). Invalid globs are rejected at load time.
+`lets.kdl`. Powers two features: [`--watch`](/lets/watch/) re-runs the
+command when matching files change, and
+[up-to-date checks](/lets/orchestration/#up-to-date-checks-sources--generates)
+skip the task when their content is unchanged since the last successful run
+(bypass with `--force`; fingerprints live in a self-gitignored `.lets/`
+directory). For `--watch`, patterns are collected from the whole task graph
+(deps and steps included). Invalid globs are rejected at load time.
 
 ```kdl
 sources "src/**/*.rs" "Cargo.toml"
+```
+
+### `generates`
+
+File glob patterns this task produces. Each must match at least one existing
+file for the task to be considered up to date — delete the outputs and the
+task re-runs even with unchanged sources. Only meaningful together with
+`sources`.
+
+```kdl
+generates "dist/**"
 ```
 
 ### `precondition`

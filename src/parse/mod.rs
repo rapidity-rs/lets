@@ -162,6 +162,7 @@ fn parse_command_body(
         flags: Vec::new(),
         aliases: Vec::new(),
         sources: Vec::new(),
+        generates: Vec::new(),
         preconditions: Vec::new(),
         status: Vec::new(),
         run: RunConfig {
@@ -188,6 +189,9 @@ fn parse_command_body(
                 }
                 "sources" => {
                     cmd.sources = parse_string_list(child);
+                }
+                "generates" => {
+                    cmd.generates = parse_string_list(child);
                 }
                 "precondition" => {
                     let cmd_str = first_string_arg(child).ok_or_else(|| Error::ParseNoSpan {

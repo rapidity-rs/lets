@@ -23,7 +23,9 @@ kdl = { version = "6", features = ["span"] }
 miette = { version = "7.6.0", features = ["fancy"] }
 notify-debouncer-full = "0.7.0"
 parking_lot = "0.12.5"
+sha2 = "0.11.0"
 thiserror = "2"
+walkdir = "2.5.0"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["signal", "process"] }

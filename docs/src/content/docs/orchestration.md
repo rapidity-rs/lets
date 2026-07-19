@@ -202,6 +202,44 @@ Use `--force` to run anyway. Gate commands execute with the task's `env`,
 `dir`, and `shell`, and produce no output of their own. Under `--dry-run`
 they are printed but not evaluated.
 
+## Up-to-date checks (`sources` / `generates`)
+
+Tasks that declare [`sources`](/lets/reference/#sources) get automatic
+checksum-based skipping: when the content of every matching file is unchanged
+since the task's last successful run, the task is up to date and skipped —
+no shell checks to write:
+
+```kdl
+bundle {
+    sources "src/**" "package.json"
+    generates "dist/**"
+    run "npm run build"
+}
+```
+
+```
+$ lets bundle          # runs, records a fingerprint
+$ lets bundle
+'bundle' is up to date
+$ vim src/app.js
+$ lets bundle          # runs again
+```
+
+Details:
+
+- The fingerprint covers file **content** (not timestamps), plus the task's
+  command strings, env, and arguments — editing the config or referencing
+  the task with different arguments re-runs it.
+- `generates` declares outputs: each glob must match at least one existing
+  file for the task to count as done (delete `dist/` and it rebuilds).
+- Fingerprints are recorded only after **successful** runs, in a `.lets/`
+  directory next to `lets.kdl` (self-gitignored, safe to delete anytime).
+- `--force` runs regardless; `--dry-run` previews without evaluating.
+- This is an optimization, not a build-correctness guarantee — undeclared
+  inputs (env of the machine, network state) are invisible to it.
+- The same `sources` patterns power [watch mode](/lets/watch/): declare
+  them once, get both re-run-on-change and skip-when-unchanged.
+
 ## Output modes
 
 When several tasks run via `deps` or `steps`, control how their output reaches the terminal with `output` in the top-level `config` block:

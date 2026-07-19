@@ -24,6 +24,7 @@ mod commands;
 mod discover;
 mod error;
 mod exec;
+mod fingerprint;
 mod interpolate;
 mod output;
 mod parse;
@@ -150,7 +151,12 @@ fn run() -> error::Result<()> {
         return watch::run(&tree, &matches, path);
     }
 
-    exec::run(&tree, &matches)
+    let project_root = config_path
+        .as_deref()
+        .and_then(std::path::Path::parent)
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    exec::run(&tree, &matches, &project_root)
 }
 
 /// Handle `lets self <subcommand>` after config is loaded.

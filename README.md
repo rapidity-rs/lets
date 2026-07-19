@@ -202,7 +202,23 @@ setup {
 }
 ```
 
-`--force` runs a task even when its `status` says up to date.
+Tasks with `sources` also skip automatically when file content is unchanged since their last successful run — no check to write:
+
+```kdl
+bundle {
+    sources "src/**" "package.json"
+    generates "dist/**"
+    run "npm run build"
+}
+```
+
+```
+$ lets bundle
+$ lets bundle
+'bundle' is up to date
+```
+
+Fingerprints live in a self-gitignored `.lets/` directory. `--force` runs a task even when it reports up to date.
 
 ### Output modes
 

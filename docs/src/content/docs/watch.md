@@ -94,6 +94,9 @@ readable: `lets --watch --output prefixed dev`. See
 
 ## Relationship to up-to-date checks
 
-`sources` is designed to also power fingerprinting (skip a task when its
-sources haven't changed since the last run) in a future release — declare
-your patterns once and both features use them.
+The same `sources` patterns power
+[fingerprint-based skipping](/lets/orchestration/#up-to-date-checks-sources--generates):
+outside watch mode, a task whose sources are unchanged since its last
+successful run is skipped as up to date. Declare your patterns once and both
+features use them. The two compose: a watch restart triggered by a config
+edit re-runs only the tasks whose inputs actually changed.

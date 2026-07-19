@@ -36,6 +36,7 @@ const SMOKE: &[(&str, &[&[&str]])] = &[
         "advanced",
         &[
             &["stack"],
+            &["bundle"],
             &["init"],
             &["guarded"],
             &["health-check"],

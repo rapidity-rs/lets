@@ -206,8 +206,12 @@ pub struct CommandNode {
     pub flags: Vec<FlagDef>,
     /// Command aliases (e.g. `alias "t"` makes `lets t` work).
     pub aliases: Vec<String>,
-    /// File glob patterns this task depends on (used by --watch).
+    /// File glob patterns this task depends on (used by --watch and
+    /// fingerprint-based up-to-date checks).
     pub sources: Vec<String>,
+    /// File glob patterns this task produces; each must match at least one
+    /// existing file for the task to be considered up to date.
+    pub generates: Vec<String>,
     /// Shell commands that must succeed for the task to run at all.
     pub preconditions: Vec<Precondition>,
     /// Shell commands that, when ALL succeed, mark the task up to date

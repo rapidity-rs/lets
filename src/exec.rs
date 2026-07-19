@@ -10,19 +10,21 @@
 //! interpolation to [`crate::interpolate`].
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use clap::ArgMatches;
 use parking_lot::{Condvar, Mutex};
 
 use crate::error::{Error, Result};
+use crate::fingerprint;
 use crate::interpolate::{self, Placeholder};
 use crate::output::{OutputMode, TaskSink};
 use crate::shell::{self, ExecContext, exec_shell};
 use crate::tree::{CommandNode, CommandTree, FlagType};
 
 /// Resolve the matched subcommand from clap back to our tree and execute it.
-pub fn run(tree: &CommandTree, matches: &ArgMatches) -> Result<()> {
+pub fn run(tree: &CommandTree, matches: &ArgMatches, project_root: &Path) -> Result<()> {
     let Some((node, node_matches, root_key)) = resolve(tree, matches) else {
         return Ok(());
     };
@@ -47,6 +49,7 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches) -> Result<()> {
         color_seq: AtomicUsize::new(0),
         dry_run,
         force,
+        project_root: project_root.to_path_buf(),
     };
     let mut visited = HashSet::new();
     orch.collect_interaction(node, &root_key, yes, &mut visited)?;
@@ -72,7 +75,15 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches) -> Result<()> {
         return Ok(());
     }
 
-    // 5. Hooks and main commands. The root command is never prefixed or
+    // 5. Sources fingerprint: skip when inputs are unchanged since the
+    // last successful run.
+    let freshness = check_freshness(project_root, &root_key, node, dry_run, force)?;
+    if matches!(freshness, fingerprint::Freshness::Current) {
+        report_up_to_date(&root_key.join(" "));
+        return Ok(());
+    }
+
+    // 6. Hooks and main commands. The root command is never prefixed or
     // grouped (it may be interactive); silent still buffers until failure.
     let sink = TaskSink::for_root(node.exec.silent);
     let result = (|| -> Result<()> {
@@ -94,7 +105,46 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches) -> Result<()> {
     // or interrupt.
     run_defers(node, &ctx, &sink);
     sink.finish(result.is_err());
+    record_freshness(project_root, &root_key, freshness, result.is_ok());
     result
+}
+
+/// Evaluate the sources fingerprint unless bypassed by --force or dry-run
+/// (which prints a preview line instead).
+fn check_freshness(
+    project_root: &Path,
+    key: &[String],
+    node: &CommandNode,
+    dry_run: bool,
+    force: bool,
+) -> Result<fingerprint::Freshness> {
+    if node.sources.is_empty() || force {
+        return Ok(fingerprint::Freshness::NoInputs);
+    }
+    if dry_run {
+        println!(
+            "[dry-run] fingerprint: {} source pattern(s)",
+            node.sources.len()
+        );
+        return Ok(fingerprint::Freshness::NoInputs);
+    }
+    fingerprint::check(project_root, key, node)
+}
+
+/// Persist the fingerprint after a successful run. Cache trouble is a
+/// warning, never a failure — fingerprinting is an optimization.
+fn record_freshness(
+    project_root: &Path,
+    key: &[String],
+    freshness: fingerprint::Freshness,
+    succeeded: bool,
+) {
+    if succeeded
+        && let fingerprint::Freshness::Stale(digest) = freshness
+        && let Err(e) = fingerprint::record(project_root, key, &digest)
+    {
+        eprintln!("\x1b[33mwarning:\x1b[0m could not record fingerprint: {e}");
+    }
 }
 
 /// Print a deprecation warning if the node is marked deprecated.
@@ -246,6 +296,9 @@ struct Orchestrator<'a> {
     dry_run: bool,
     /// Ignore status checks (--force): tasks run even when up to date.
     force: bool,
+    /// Directory containing the config file; sources/generates and the
+    /// fingerprint cache are relative to it.
+    project_root: PathBuf,
 }
 
 impl Orchestrator<'_> {
@@ -386,6 +439,13 @@ impl Orchestrator<'_> {
             return Ok(());
         }
 
+        // Sources fingerprint: skip when inputs are unchanged.
+        let freshness = check_freshness(&self.project_root, key, node, self.dry_run, self.force)?;
+        if matches!(freshness, fingerprint::Freshness::Current) {
+            report_up_to_date(&key.join(" "));
+            return Ok(());
+        }
+
         // This task's own output (hooks + run commands) goes through one sink
         // so grouped mode flushes it as a single block.
         let label = key.join(" ");
@@ -396,6 +456,7 @@ impl Orchestrator<'_> {
         // failure, or interrupt.
         run_defers(node, &ctx, &sink);
         sink.finish(result.is_err());
+        record_freshness(&self.project_root, key, freshness, result.is_ok());
         result
     }
 
