@@ -77,11 +77,17 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, config_path: &Path) -> Resu
 
     let (tx, rx) = mpsc::channel::<Msg>();
 
-    // Filesystem watcher.
+    // Filesystem watcher. Only mutations count: Linux inotify also reports
+    // reads (Access events), and the re-exec'd child reads lets.kdl on every
+    // start — reacting to reads would restart-loop forever.
     let fs_tx = tx.clone();
     let mut debouncer = new_debouncer(DEBOUNCE, None, move |result: DebounceEventResult| {
         if let Ok(events) = result {
-            let paths: Vec<PathBuf> = events.into_iter().flat_map(|e| e.paths.clone()).collect();
+            let paths: Vec<PathBuf> = events
+                .into_iter()
+                .filter(|e| e.kind.is_create() || e.kind.is_modify() || e.kind.is_remove())
+                .flat_map(|e| e.paths.clone())
+                .collect();
             if !paths.is_empty() {
                 let _ = fs_tx.send(Msg::Fs(paths));
             }
