@@ -116,6 +116,11 @@ fn run() -> error::Result<()> {
         tree.config.output = mode.parse().map_err(error::Error::Other)?;
     }
 
+    // --jobs overrides the config's concurrency cap.
+    if let Some(jobs) = matches.get_one::<u64>("jobs") {
+        tree.config.jobs = Some(*jobs as usize);
+    }
+
     // Built-in flags.
     if matches.get_flag("list") {
         if !config_found {

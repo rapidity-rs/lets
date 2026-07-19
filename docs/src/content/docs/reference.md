@@ -32,6 +32,7 @@ config {
 | `sorted` | — | Sort commands alphabetically in help and lists |
 | `shell` | string | Default shell for all commands |
 | `output` | `"interleaved"`, `"group"`, `"prefixed"` | Output mode for tasks run via `deps`/`steps` (default: `"interleaved"`) |
+| `jobs` | integer ≥ 1 | Maximum number of tasks executing concurrently (default: unlimited; `--jobs` overrides) |
 
 Output modes:
 

@@ -50,6 +50,7 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, project_root: &Path) -> Res
         dry_run,
         force,
         project_root: project_root.to_path_buf(),
+        permits: Semaphore::new(tree.config.jobs),
     };
     let mut visited = HashSet::new();
     orch.collect_interaction(node, &root_key, yes, &mut visited)?;
@@ -299,6 +300,48 @@ struct Orchestrator<'a> {
     /// Directory containing the config file; sources/generates and the
     /// fingerprint cache are relative to it.
     project_root: PathBuf,
+    /// Caps concurrently executing task bodies (config jobs / --jobs).
+    permits: Semaphore,
+}
+
+/// Minimal counting semaphore. Permits wrap only a task's command phase —
+/// never the deps/steps recursion — so a parent waiting on children can
+/// never deadlock the pool.
+struct Semaphore {
+    /// None = unlimited.
+    state: Option<(Mutex<usize>, Condvar)>,
+}
+
+impl Semaphore {
+    fn new(limit: Option<usize>) -> Self {
+        Semaphore {
+            state: limit.map(|n| (Mutex::new(n), Condvar::new())),
+        }
+    }
+
+    fn acquire(&self) -> SemaphoreGuard<'_> {
+        if let Some((available, cv)) = &self.state {
+            let mut available = available.lock();
+            while *available == 0 {
+                cv.wait(&mut available);
+            }
+            *available -= 1;
+        }
+        SemaphoreGuard { semaphore: self }
+    }
+}
+
+struct SemaphoreGuard<'a> {
+    semaphore: &'a Semaphore,
+}
+
+impl Drop for SemaphoreGuard<'_> {
+    fn drop(&mut self) {
+        if let Some((available, cv)) = &self.semaphore.state {
+            *available.lock() += 1;
+            cv.notify_one();
+        }
+    }
 }
 
 impl Orchestrator<'_> {
@@ -447,11 +490,14 @@ impl Orchestrator<'_> {
         }
 
         // This task's own output (hooks + run commands) goes through one sink
-        // so grouped mode flushes it as a single block.
+        // so grouped mode flushes it as a single block. The permit caps how
+        // many task bodies execute at once.
         let label = key.join(" ");
         let color_seq = self.color_seq.fetch_add(1, Ordering::Relaxed);
         let sink = TaskSink::for_task(self.mode, &label, node.exec.silent, color_seq);
+        let permit = self.permits.acquire();
         let result = self.exec_node_commands(node, key, args, &ctx, &sink);
+        drop(permit);
         // Cleanup runs whenever the task reached its body — success,
         // failure, or interrupt.
         run_defers(node, &ctx, &sink);

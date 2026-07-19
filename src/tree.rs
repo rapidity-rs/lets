@@ -82,6 +82,8 @@ pub struct Config {
     pub shell: Option<String>,
     /// How output from tasks run via deps/steps is presented.
     pub output: crate::output::OutputMode,
+    /// Maximum number of task bodies executing concurrently (None = unlimited).
+    pub jobs: Option<usize>,
 }
 
 /// Configuration for what command to run and on which platforms.

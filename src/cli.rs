@@ -125,6 +125,13 @@ pub fn build_cli(tree: &CommandTree) -> Command {
                 .global(true),
         )
         .arg(
+            clap::Arg::new("jobs")
+                .long("jobs")
+                .help("Maximum number of tasks running concurrently")
+                .value_parser(clap::value_parser!(u64).range(1..))
+                .global(true),
+        )
+        .arg(
             clap::Arg::new("list")
                 .long("list")
                 .help("List all available commands")
