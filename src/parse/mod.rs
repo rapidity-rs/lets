@@ -159,6 +159,8 @@ fn parse_command_body(
         flags: Vec::new(),
         aliases: Vec::new(),
         sources: Vec::new(),
+        preconditions: Vec::new(),
+        status: Vec::new(),
         run: RunConfig {
             commands: inline_cmd.into_iter().collect(),
             ..Default::default()
@@ -183,6 +185,18 @@ fn parse_command_body(
                 }
                 "sources" => {
                     cmd.sources = parse_string_list(child);
+                }
+                "precondition" => {
+                    let cmd_str = first_string_arg(child).ok_or_else(|| Error::ParseNoSpan {
+                        message: "precondition requires a shell command argument".to_string(),
+                    })?;
+                    cmd.preconditions.push(crate::tree::Precondition {
+                        cmd: cmd_str,
+                        message: named_string(child, "message"),
+                    });
+                }
+                "status" => {
+                    cmd.status.extend(parse_string_list(child));
                 }
                 "examples" => {
                     cmd.examples = first_string_arg(child);

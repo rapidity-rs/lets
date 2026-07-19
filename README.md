@@ -186,6 +186,24 @@ release {
 }
 ```
 
+### Preconditions & up-to-date checks
+
+Gate tasks on the state of the world — no state files, just shell checks:
+
+```kdl
+deploy {
+    precondition "test -f .env" message="Copy .env.example to .env first"
+    run "scripts/deploy.sh"
+}
+
+setup {
+    status "test -d node_modules"   // all pass => task skipped as up to date
+    run "npm install"
+}
+```
+
+`--force` runs a task even when its `status` says up to date.
+
 ### Output modes
 
 Choose how parallel task output is presented, globally or per run:

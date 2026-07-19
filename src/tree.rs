@@ -203,6 +203,11 @@ pub struct CommandNode {
     pub aliases: Vec<String>,
     /// File glob patterns this task depends on (used by --watch).
     pub sources: Vec<String>,
+    /// Shell commands that must succeed for the task to run at all.
+    pub preconditions: Vec<Precondition>,
+    /// Shell commands that, when ALL succeed, mark the task up to date
+    /// (skipped). Bypassed by --force.
+    pub status: Vec<String>,
     /// What to run.
     pub run: RunConfig,
     /// Task orchestration.
@@ -215,6 +220,15 @@ pub struct CommandNode {
     pub interactive: Interactive,
     /// Subcommands (if this is a group).
     pub children: Vec<CommandNode>,
+}
+
+/// A shell-command gate: the task refuses to run unless it exits 0.
+#[derive(Debug, Clone)]
+pub struct Precondition {
+    /// Command executed with the task's shell/env/dir.
+    pub cmd: String,
+    /// Message shown instead of the command when the gate fails.
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone)]

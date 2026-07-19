@@ -18,7 +18,7 @@ use parking_lot::{Condvar, Mutex};
 use crate::error::{Error, Result};
 use crate::interpolate::{self, Placeholder};
 use crate::output::{OutputMode, TaskSink};
-use crate::shell::{ExecContext, exec_shell};
+use crate::shell::{self, ExecContext, exec_shell};
 use crate::tree::{CommandNode, CommandTree, FlagType};
 
 /// Resolve the matched subcommand from clap back to our tree and execute it.
@@ -31,6 +31,7 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches) -> Result<()> {
 
     let yes = matches.get_flag("yes");
     let dry_run = matches.get_flag("dry-run");
+    let force = matches.get_flag("force");
     let ctx = ExecContext::from_node(node, &tree.config, dry_run)?;
 
     // Collect every prompt/choose/confirm in the transitive task graph up
@@ -43,6 +44,7 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches) -> Result<()> {
         mode: tree.config.output,
         color_seq: AtomicUsize::new(0),
         dry_run,
+        force,
     };
     let mut visited = HashSet::new();
     orch.collect_interaction(node, &root_key, yes, &mut visited)?;
@@ -53,13 +55,22 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches) -> Result<()> {
         .cloned()
         .unwrap_or_default();
 
-    // 1. Parallel deps (run-once).
+    // 1. Preconditions gate the whole task, before any work starts.
+    check_preconditions(node, &ctx, dry_run)?;
+
+    // 2. Parallel deps (run-once).
     orch.run_deps(node)?;
 
-    // 2. Sequential steps (run-once).
+    // 3. Sequential steps (run-once).
     orch.run_steps(node)?;
 
-    // 3. Hooks and main commands. The root command is never prefixed or
+    // 4. Status checks: deps may have satisfied them, so they run after.
+    if is_up_to_date(node, &ctx, dry_run, force)? {
+        report_up_to_date(&root_key.join(" "));
+        return Ok(());
+    }
+
+    // 5. Hooks and main commands. The root command is never prefixed or
     // grouped (it may be interactive); silent still buffers until failure.
     let sink = TaskSink::for_root(node.exec.silent);
     let result = (|| -> Result<()> {
@@ -95,6 +106,60 @@ fn warn_deprecated(node: &CommandNode) {
     }
 }
 
+/// Fail fast when any precondition exits non-zero. Dry-run only previews.
+fn check_preconditions(node: &CommandNode, ctx: &ExecContext, dry_run: bool) -> Result<()> {
+    for pre in &node.preconditions {
+        if dry_run {
+            println!("[dry-run] precondition: {}", pre.cmd);
+            continue;
+        }
+        if !shell::check_shell(&pre.cmd, ctx)? {
+            let detail = pre
+                .message
+                .clone()
+                .unwrap_or_else(|| format!("`{}` failed", pre.cmd));
+            return Err(Error::Other(format!(
+                "precondition not met for '{}': {detail}",
+                node.name
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// A task with status checks is up to date when ALL of them exit zero.
+/// Dry-run previews the checks and never skips; --force disables skipping.
+fn is_up_to_date(
+    node: &CommandNode,
+    ctx: &ExecContext,
+    dry_run: bool,
+    force: bool,
+) -> Result<bool> {
+    if node.status.is_empty() {
+        return Ok(false);
+    }
+    if dry_run {
+        for check in &node.status {
+            println!("[dry-run] status: {check}");
+        }
+        return Ok(false);
+    }
+    if force {
+        return Ok(false);
+    }
+    for check in &node.status {
+        if !shell::check_shell(check, ctx)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Dim stderr notice for a skipped task (never mixed into task output).
+fn report_up_to_date(label: &str) {
+    eprintln!("\x1b[2m'{label}' is up to date\x1b[0m");
+}
+
 /// Shared state for one invocation's task graph execution.
 struct Orchestrator<'a> {
     tree: &'a CommandTree,
@@ -106,6 +171,8 @@ struct Orchestrator<'a> {
     /// Monotonic counter assigning label colors.
     color_seq: AtomicUsize,
     dry_run: bool,
+    /// Ignore status checks (--force): tasks run even when up to date.
+    force: bool,
 }
 
 impl Orchestrator<'_> {
@@ -230,9 +297,18 @@ impl Orchestrator<'_> {
 
         let ctx = ExecContext::from_node(node, &self.tree.config, self.dry_run)?;
 
+        // Preconditions gate the task before any of its work starts.
+        check_preconditions(node, &ctx, self.dry_run)?;
+
         // Nested deps and steps run first; they present through their own sinks.
         self.run_deps(node)?;
         self.run_steps(node)?;
+
+        // Status checks may have been satisfied by deps, so they run after.
+        if is_up_to_date(node, &ctx, self.dry_run, self.force)? {
+            report_up_to_date(&key.join(" "));
+            return Ok(());
+        }
 
         // This task's own output (hooks + run commands) goes through one sink
         // so grouped mode flushes it as a single block.

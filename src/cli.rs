@@ -118,6 +118,13 @@ pub fn build_cli(tree: &CommandTree) -> Command {
                 .global(true),
         )
         .arg(
+            clap::Arg::new("force")
+                .long("force")
+                .help("Run tasks even if their status checks report up to date")
+                .action(clap::ArgAction::SetTrue)
+                .global(true),
+        )
+        .arg(
             clap::Arg::new("list")
                 .long("list")
                 .help("List all available commands")

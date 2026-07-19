@@ -34,7 +34,14 @@ const SMOKE: &[(&str, &[&[&str]])] = &[
     ("watch", &[&["dev"], &["test"]]),
     (
         "advanced",
-        &[&["health-check"], &["deploy"], &["old-deploy"], &["ship"]],
+        &[
+            &["init"],
+            &["guarded"],
+            &["health-check"],
+            &["deploy"],
+            &["old-deploy"],
+            &["ship"],
+        ],
     ),
     ("monorepo", &[&["ci"], &["frontend", "build"]]),
 ];
