@@ -36,7 +36,11 @@ use std::path::PathBuf;
 use std::process;
 
 fn main() {
-    if let Err(e) = run() {
+    let result = run();
+    if exec::interrupted() {
+        process::exit(130);
+    }
+    if let Err(e) = result {
         match &e {
             error::Error::CommandFailed { code } => process::exit(*code),
             _ => {

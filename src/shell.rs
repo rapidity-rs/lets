@@ -111,6 +111,23 @@ fn exec_shell_once(command: &str, ctx: &ExecContext, sink: &TaskSink) -> Result<
         cmd.current_dir(dir);
     }
 
+    // The signal-handling machinery may leave SIGINT/SIGTERM blocked in this
+    // thread; the mask survives fork+exec, which would make children immune
+    // to Ctrl-C. Explicitly unblock in the child.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: sigprocmask is async-signal-safe.
+        unsafe {
+            cmd.pre_exec(|| {
+                let mut set = nix::sys::signal::SigSet::empty();
+                set.add(nix::sys::signal::Signal::SIGINT);
+                set.add(nix::sys::signal::Signal::SIGTERM);
+                set.thread_unblock().map_err(std::io::Error::other)
+            });
+        }
+    }
+
     if let Some(timeout) = ctx.timeout {
         // Spawn child in its own process group so timeout kills the entire tree.
         #[cfg(unix)]
@@ -152,6 +169,7 @@ fn exec_inherited(mut cmd: process::Command, ctx: &ExecContext) -> Result<()> {
 
     let (tx, rx) = std::sync::mpsc::channel();
     let pid = child.id();
+    let _pgroup = PgroupGuard::register(pid);
 
     std::thread::spawn(move || {
         let result = child.wait();
@@ -186,6 +204,7 @@ fn exec_captured(mut cmd: process::Command, ctx: &ExecContext, sink: &TaskSink) 
     // Command retains its Stdio handles for potential respawn; drop them so
     // the pipe sees EOF when the child exits.
     drop(cmd);
+    let _pgroup = ctx.timeout.map(|_| PgroupGuard::register(child.id()));
 
     // Watchdog thread kills the process group at the deadline while this
     // thread drains the pipe.
@@ -230,6 +249,46 @@ fn kill_process_group(pid: u32) {
     #[cfg(not(unix))]
     {
         let _ = pid;
+    }
+}
+
+/// Children running in their own process groups (timeout-managed): the
+/// terminal's SIGINT never reaches them, so interrupt handling forwards
+/// SIGTERM explicitly via [`terminate_process_groups`].
+static PGROUP_CHILDREN: parking_lot::Mutex<Vec<u32>> = parking_lot::Mutex::new(Vec::new());
+
+/// RAII registration of a process-grouped child for signal forwarding.
+struct PgroupGuard {
+    pid: u32,
+}
+
+impl PgroupGuard {
+    fn register(pid: u32) -> Self {
+        PGROUP_CHILDREN.lock().push(pid);
+        PgroupGuard { pid }
+    }
+}
+
+impl Drop for PgroupGuard {
+    fn drop(&mut self) {
+        PGROUP_CHILDREN.lock().retain(|p| *p != self.pid);
+    }
+}
+
+/// SIGTERM every registered child process group (called from the signal
+/// handler so interrupted runs shut their task trees down gracefully).
+pub(crate) fn terminate_process_groups() {
+    for pid in PGROUP_CHILDREN.lock().iter() {
+        #[cfg(unix)]
+        {
+            use nix::sys::signal::{self, Signal};
+            use nix::unistd::Pid;
+            let _ = signal::killpg(Pid::from_raw(*pid as i32), Signal::SIGTERM);
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = pid;
+        }
     }
 }
 

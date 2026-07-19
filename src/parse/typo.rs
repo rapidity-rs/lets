@@ -17,6 +17,7 @@ const KNOWN_KEYWORDS: &[&str] = &[
     "status",
     "before",
     "after",
+    "defer",
     "env",
     "env-file",
     "dir",

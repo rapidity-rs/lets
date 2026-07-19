@@ -138,6 +138,33 @@ Deploy complete!
 
 Hooks are simple shell strings — they don't support arguments or interpolation from the command's args/flags (use `run` for that).
 
+## Guaranteed cleanup (`defer`)
+
+`after` only runs when the command succeeded. `defer` runs when the task
+settles **no matter how** — success, failure, or Ctrl-C — making it the right
+place to tear down what the task started:
+
+```kdl
+integration-test {
+    defer "docker compose down"
+    run "docker compose up --wait"
+    run "cargo test --test integration"
+}
+```
+
+If the tests fail, or you interrupt the run, `docker compose down` still
+executes. Details:
+
+- Multiple `defer` nodes run in **reverse declaration order** (LIFO), like
+  Go's `defer` or a stack of `trap`s.
+- A failing defer prints a warning but never changes the task's result.
+- Defers run only if the task reached its body — if a precondition failed,
+  a dep failed first, or `status` skipped the task, there is nothing to
+  clean up and defers don't run.
+- On Ctrl-C (or SIGTERM), lets forwards termination to its children, runs
+  pending defers, and exits with code 130. Press Ctrl-C twice to exit
+  immediately.
+
 ## Gating tasks (`precondition` / `status`)
 
 Two stateless gates control whether a task runs at all.
@@ -208,7 +235,8 @@ For any command, the complete execution order is:
 5. **`status`** — if all checks pass, the task is up to date and stops here
 6. **`before`** hook
 7. **`run`** commands (sequential, with interpolation)
-8. **`after`** hook
+8. **`after`** hook (success only)
+9. **`defer`** commands (always — success, failure, or interrupt; LIFO)
 
 ## Real-world example
 

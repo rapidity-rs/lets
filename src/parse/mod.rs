@@ -230,6 +230,11 @@ fn parse_command_body(
                 "after" => {
                     cmd.orch.after = first_string_arg(child);
                 }
+                "defer" => {
+                    if let Some(cmd_str) = first_string_arg(child) {
+                        cmd.orch.defers.push(cmd_str);
+                    }
+                }
                 "env" => {
                     cmd.env.vars = parse_env(child);
                 }
