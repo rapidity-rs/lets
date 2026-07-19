@@ -166,6 +166,40 @@ fn check_preconditions(node: &CommandNode, ctx: &ExecContext, dry_run: bool) -> 
     Ok(())
 }
 
+/// Canonical identity for a task reference: the command path plus parsed
+/// argument values in declaration order. `build -j 8 --release` and
+/// `build --release -j 8` are one task, and `build` equals `build -j 4`
+/// when 4 is the declared default.
+fn canonical_key(target: &CommandNode, tokens: &[String], args: &[String]) -> Vec<String> {
+    let path = &tokens[..tokens.len() - args.len()];
+    if target.args.is_empty() && target.flags.is_empty() {
+        return path.to_vec();
+    }
+
+    let argv = std::iter::once(target.name.clone()).chain(args.iter().cloned());
+    let Ok(matches) = crate::cli::build_subcommand(target, false).try_get_matches_from(argv) else {
+        // Load-time validation makes this unreachable; fall back to raw tokens.
+        return tokens.to_vec();
+    };
+
+    let mut key = path.to_vec();
+    for arg in &target.args {
+        if let Some(value) = matches.get_one::<String>(&arg.name) {
+            key.push(format!("{}={value}", arg.name));
+        }
+    }
+    for flag in &target.flags {
+        if flag.value_type.is_none() {
+            if matches.get_flag(&flag.name) {
+                key.push(format!("{}=true", flag.name));
+            }
+        } else if let Some(value) = get_value(target, &matches, &flag.name) {
+            key.push(format!("{}={value}", flag.name));
+        }
+    }
+    key
+}
+
 /// A task with status checks is up to date when ALL of them exit zero.
 /// Dry-run previews the checks and never skips; --force disables skipping.
 fn is_up_to_date(
@@ -233,11 +267,12 @@ impl Orchestrator<'_> {
         }
 
         for task_ref in node.orch.deps.iter().chain(&node.orch.steps) {
-            let (target, _args) = self
+            let (target, args) = self
                 .tree
                 .resolve_ref(task_ref)
                 .ok_or_else(|| Error::Other(format!("task '{}' not found", task_ref.display())))?;
-            self.collect_interaction(target, &task_ref.tokens, yes, visited)?;
+            let child_key = canonical_key(target, &task_ref.tokens, args);
+            self.collect_interaction(target, &child_key, yes, visited)?;
         }
 
         let vars = run_interactive(node, yes)?;
@@ -301,7 +336,8 @@ impl Orchestrator<'_> {
                             self.tree.resolve_ref(task_ref).ok_or_else(|| {
                                 Error::Other(format!("dep '{}' not found", task_ref.display()))
                             })?;
-                        self.run_task(&task_ref.tokens, dep_node, args)
+                        let key = canonical_key(dep_node, &task_ref.tokens, args);
+                        self.run_task(&key, dep_node, args)
                     })
                 })
                 .collect();
@@ -323,7 +359,8 @@ impl Orchestrator<'_> {
                 .tree
                 .resolve_ref(task_ref)
                 .ok_or_else(|| Error::Other(format!("step '{}' not found", task_ref.display())))?;
-            self.run_task(&task_ref.tokens, step_node, args)?;
+            let key = canonical_key(step_node, &task_ref.tokens, args);
+            self.run_task(&key, step_node, args)?;
         }
         Ok(())
     }
