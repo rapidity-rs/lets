@@ -1,0 +1,30 @@
+// Presentation of parallel task output: interleaved, group, or prefixed.
+//
+// Try:
+//   lets all                     (prefixed: lines tagged live, per-task colors)
+//   lets --output group all      (each task prints as one block when done)
+//   lets --output interleaved all
+//
+// The flag overrides the config default below.
+
+description "Output modes — taming parallel output"
+
+config {
+    output "prefixed"
+}
+
+alpha "sh -c 'echo one; sleep 0.1; echo two; sleep 0.1; echo three'"
+beta "sh -c 'echo uno; sleep 0.1; echo dos; sleep 0.1; echo tres'"
+
+// `silent` buffers a task's output and shows it only on failure —
+// labeled with the task name when it runs as a dep.
+quiet-check {
+    silent
+    run "echo you will not see this unless it fails"
+}
+
+all {
+    description "Run three tasks in parallel"
+    deps "alpha" "beta" "quiet-check"
+    run "echo done"
+}

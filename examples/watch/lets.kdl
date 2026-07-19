@@ -1,0 +1,23 @@
+// Watch mode: declare what a task depends on, re-run it on change.
+//
+// Try:
+//   lets --watch dev
+//   ...then edit src/app.txt in another terminal and watch it re-run.
+//
+// `sources` are collected from the whole task graph (deps included),
+// events are debounced, and editing lets.kdl itself also restarts
+// with the new config. Ctrl-C stops the loop.
+
+description "Watch mode — sources and --watch"
+
+dev {
+    description "Rebuild whenever sources change"
+    sources "src/**" "lets.kdl"
+    run "sh -c 'echo rebuilt at $(date +%H:%M:%S): && cat src/app.txt'"
+}
+
+test {
+    description "A watchable test loop: lets --watch test"
+    sources "src/**"
+    run "echo running tests against src/"
+}

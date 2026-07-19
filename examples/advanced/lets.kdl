@@ -1,0 +1,55 @@
+// Resilience and polish: timeout, retry, silent, hidden commands,
+// deprecation, multiple run commands, and rich help text.
+//
+// Try:
+//   lets health-check
+//   lets deploy
+//   lets old-deploy          (prints a deprecation warning)
+//   lets ship --help         (long description + examples in help)
+//   lets --list              (setup-db is hidden from this list)
+
+description "Advanced — timeouts, retries, and help polish"
+
+// Kill after a deadline; retry with a delay between attempts.
+health-check {
+    description "Probe the service until it responds"
+    timeout "10s"
+    retry count=3 delay="1s"
+    run "echo curl -f http://localhost:3000/health"
+}
+
+// Hidden commands stay out of --list and --help but still run —
+// useful for plumbing tasks that only exist to be depended on.
+setup-db {
+    hide
+    run "echo diesel database setup"
+}
+
+// Multiple run commands execute sequentially, stopping on failure.
+deploy {
+    deps "setup-db"
+    run "echo building image"
+    run "echo pushing image"
+    run "echo restarting service"
+}
+
+// Deprecated commands keep working but warn, with a migration hint.
+old-deploy {
+    deprecated "Use 'deploy' instead"
+    run "echo legacy deploy"
+}
+
+// `long-description` and `examples` render in `lets ship --help`.
+ship {
+    description "Build and publish a release"
+    long-description """
+        Builds an optimized binary, runs the health check, and
+        publishes the result. Requires network access.
+        """
+    examples """
+        lets ship              Publish a release
+        lets --dry-run ship    Show the plan without running it
+        """
+    deps "health-check"
+    run "echo shipping"
+}

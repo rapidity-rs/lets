@@ -1,0 +1,21 @@
+// Frontend tasks — included by the root lets.kdl.
+// `dir` makes every command here run from frontend/.
+
+frontend {
+    description "Frontend package"
+
+    build {
+        dir "frontend"
+        run "echo npm run build"
+    }
+
+    test {
+        dir "frontend"
+        run "echo npm test"
+    }
+
+    check {
+        description "Build then test"
+        steps "frontend build" "frontend test"
+    }
+}

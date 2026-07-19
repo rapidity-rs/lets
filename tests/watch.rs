@@ -101,12 +101,18 @@ fn watch_ignores_non_matching_change() {
         "first run never happened"
     );
 
+    // Absorb any straggler events from the tempdir setup writes (the
+    // watcher may see the just-created lets.kdl and legitimately restart
+    // once), then take a baseline.
+    std::thread::sleep(Duration::from_secs(1));
+    let baseline = runs(&log);
+
     // Unrelated file: no rerun within a generous window.
     fs::write(root.join("unrelated.txt"), "noise").unwrap();
     std::thread::sleep(Duration::from_secs(2));
     let count = runs(&log);
     kill_tree(&mut watcher);
-    assert_eq!(count, 1, "unrelated change must not trigger a rerun");
+    assert_eq!(count, baseline, "unrelated change must not trigger a rerun");
 }
 
 #[test]

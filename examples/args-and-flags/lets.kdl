@@ -1,0 +1,45 @@
+// Typed arguments, choices, defaults, flags, and passthrough args.
+//
+// Try:
+//   lets deploy staging
+//   lets deploy banana        (rejected: not one of the choices)
+//   lets greet                (uses the default)
+//   lets build --release
+//   lets serve -p 8080
+//   lets test -- --nocapture  (everything after -- is passed through)
+
+description "Arguments & flags — typed, validated, interpolated"
+
+// Positional argument restricted to a list of choices.
+// {environment} interpolates the value into the command.
+deploy {
+    description "Deploy to an environment"
+    arg environment "dev" "staging" "prod"
+    run "echo deploying to {environment}"
+}
+
+// Arguments with defaults are optional on the command line.
+greet {
+    arg name default="world"
+    run "echo hello {name}"
+}
+
+// Boolean flag with a short alias. {?release:text} emits `text`
+// only when the flag is set.
+build {
+    flag release "-r" help="Optimized build"
+    run "echo cargo build {?release:--release}"
+}
+
+// Valued flags are typed; bad values are rejected by the CLI.
+serve {
+    flag port "-p" type="int" default="3000" help="Port to listen on"
+    flag host type="string" default="127.0.0.1"
+    run "echo serving on {host}:{port}"
+}
+
+// {--} captures everything after a literal `--` on the command line.
+test {
+    description "Run tests, forwarding extra args to the harness"
+    run "echo cargo test {--}"
+}

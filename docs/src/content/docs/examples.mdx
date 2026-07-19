@@ -1,0 +1,88 @@
+---
+title: Examples
+description: Complete, runnable lets.kdl files — every one validated by the test suite.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import basics from '../../../../examples/basics/lets.kdl?raw';
+import argsAndFlags from '../../../../examples/args-and-flags/lets.kdl?raw';
+import orchestration from '../../../../examples/orchestration/lets.kdl?raw';
+import outputModes from '../../../../examples/output-modes/lets.kdl?raw';
+import interactive from '../../../../examples/interactive/lets.kdl?raw';
+import environment from '../../../../examples/environment/lets.kdl?raw';
+import watch from '../../../../examples/watch/lets.kdl?raw';
+import advanced from '../../../../examples/advanced/lets.kdl?raw';
+import monorepoRoot from '../../../../examples/monorepo/lets.kdl?raw';
+import monorepoFrontend from '../../../../examples/monorepo/frontend/tasks.kdl?raw';
+
+Every file on this page is rendered directly from the
+[`examples/`](https://github.com/rapidity-rs/lets/tree/main/examples)
+directory in the repository, and each one is parsed, validated, and dry-run
+by the test suite on every commit — what you see here is guaranteed to work
+with the current release. Clone the repo, `cd` into any example, and run the
+commands listed in its header comment.
+
+## Basics
+
+One-liners, help text, nested subcommands, and aliases.
+
+<Code code={basics} lang="kdl" title="examples/basics/lets.kdl" />
+
+## Arguments & flags
+
+Typed positional arguments with choices and defaults, boolean and valued
+flags, and `{--}` passthrough.
+
+<Code code={argsAndFlags} lang="kdl" title="examples/args-and-flags/lets.kdl" />
+
+## Orchestration
+
+Parallel `deps`, sequential `steps`, run-once semantics, arguments in task
+references, and lifecycle hooks.
+
+<Code code={orchestration} lang="kdl" title="examples/orchestration/lets.kdl" />
+
+## Output modes
+
+Choose how parallel task output is presented — and override it per run with
+`--output`.
+
+<Code code={outputModes} lang="kdl" title="examples/output-modes/lets.kdl" />
+
+## Interactive
+
+Confirmations, selection menus, and prompts — all CI-safe under `--yes`.
+
+<Code code={interactive} lang="kdl" title="examples/interactive/lets.kdl" />
+
+## Environment & platform
+
+Per-command environment, dotenv files, working directories, shells, and
+per-OS command variants.
+
+<Code code={environment} lang="kdl" title="examples/environment/lets.kdl" />
+
+## Watch mode
+
+Declare `sources`, run with `--watch`, and the command re-runs on change.
+
+<Code code={watch} lang="kdl" title="examples/watch/lets.kdl" />
+
+## Advanced
+
+Timeouts, retries, silent tasks, hidden and deprecated commands, multiple
+`run`s, and rich help text.
+
+<Code code={advanced} lang="kdl" title="examples/advanced/lets.kdl" />
+
+## Monorepo
+
+Task definitions split across packages with `include`, per-package working
+directories, and a parallel CI pipeline with labeled output.
+
+<Code code={monorepoRoot} lang="kdl" title="examples/monorepo/lets.kdl" />
+<Code code={monorepoFrontend} lang="kdl" title="examples/monorepo/frontend/tasks.kdl" />
+
+The backend file mirrors the frontend one. Run `lets ci` at the monorepo root
+and both packages build and test in parallel with `[frontend build]`-style
+prefixes.

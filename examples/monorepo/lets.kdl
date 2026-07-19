@@ -1,0 +1,24 @@
+// A realistic monorepo layout: tasks split across files with `include`,
+// per-package working directories, and a parallel CI pipeline with
+// prefixed output.
+//
+// Try:
+//   lets --list
+//   lets frontend build
+//   lets ci          (frontend and backend build in parallel, labeled)
+
+description "Monorepo — includes, dirs, and parallel CI"
+
+config {
+    output "prefixed"
+}
+
+// Each package owns its task definitions next to its code.
+include "frontend/tasks.kdl"
+include "backend/tasks.kdl"
+
+ci {
+    description "Build and test every package in parallel"
+    deps "frontend check" "backend check"
+    run "echo monorepo green"
+}
