@@ -261,6 +261,17 @@ choose environment "dev" "staging" "prod" default="staging"
 
 Under `--yes`, `choose` uses its `default` — or fails with a clear error if none is set. It never silently picks the first option.
 
+### `sources`
+
+File glob patterns this task depends on, relative to the directory containing
+`lets.kdl`. Used by [`--watch`](/lets/watch/) to re-run the command on
+changes; patterns are collected from the whole task graph (deps and steps
+included). Invalid globs are rejected at load time.
+
+```kdl
+sources "src/**/*.rs" "Cargo.toml"
+```
+
 ### `alias`
 
 Alternative names for this command.

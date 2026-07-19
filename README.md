@@ -205,6 +205,24 @@ $ lets --output group ci      # override per invocation
 
 Failed tasks always flush their buffered output, so nothing is lost in `group` mode.
 
+### Watch mode
+
+Declare the files a task depends on, re-run it on change:
+
+```kdl
+dev {
+    sources "src/**/*.rs" "Cargo.toml"
+    run "cargo run"
+}
+```
+
+```
+$ lets --watch dev
+[watch] watching 2 pattern(s) under /path/to/project
+```
+
+On each matching change the running process tree is stopped (SIGTERM, then SIGKILL) and the command re-runs — works for servers and test loops alike. Events are debounced, `sources` are collected from the whole dep graph, and editing `lets.kdl` restarts with the new config.
+
 ### Hooks
 
 Run shell commands before and after the main command:

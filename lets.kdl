@@ -32,6 +32,7 @@ test {
         lets test -- test_name          Run a specific test
         """
     alias "t"
+    sources "src/**/*.rs" "tests/**/*.rs" "Cargo.toml"
     run "cargo test {--}"
 }
 

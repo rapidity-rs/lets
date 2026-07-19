@@ -100,3 +100,4 @@ Top-level flags:
 | `--yes` / `-y` | Skip all confirmation prompts |
 | `--dry-run` | Show what would execute |
 | `--output <mode>` | Output mode for deps/steps tasks: `interleaved`, `group`, or `prefixed` (overrides config; no short form) |
+| `--watch` | Re-run the command when files matching its `sources` change |

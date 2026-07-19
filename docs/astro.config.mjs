@@ -24,6 +24,7 @@ export default defineConfig({
             'commands',
             'arguments-and-flags',
             'orchestration',
+            'watch',
             'environment',
             'interactive',
             'advanced',
