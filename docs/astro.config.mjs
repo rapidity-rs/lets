@@ -16,7 +16,7 @@ export default defineConfig({
       sidebar: [
         {
           label: 'Start here',
-          items: ['getting-started', 'kdl-primer'],
+          items: ['getting-started', 'kdl-primer', 'examples'],
         },
         {
           label: 'Guides',
@@ -37,4 +37,9 @@ export default defineConfig({
       ],
     }),
   ],
+  vite: {
+    // examples.mdx imports ../../../../examples/**/*.kdl?raw from the repo
+    // root, outside the docs project — allow the dev server to read them.
+    server: { fs: { allow: ['..'] } },
+  },
 });

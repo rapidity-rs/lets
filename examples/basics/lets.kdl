@@ -1,0 +1,30 @@
+// The simplest lets.kdl: one-liners, help text, nesting, and aliases.
+//
+// Try:
+//   lets --list
+//   lets build
+//   lets db migrate
+//   lets t              (alias for test)
+
+description "Basics — one-liners, groups, and aliases"
+
+// A command is just a name and a shell string.
+build "echo cargo build"
+
+// Add help text to a one-liner without switching to block syntax.
+lint "echo cargo clippy" description="Run lints"
+
+// Block syntax unlocks everything else. `alias` gives short names.
+test {
+    description "Run the test suite"
+    alias "t"
+    run "echo cargo test"
+}
+
+// Nesting a block inside a block creates subcommands: `lets db migrate`.
+db {
+    description "Database commands"
+    migrate "echo diesel migration run"
+    reset "echo diesel database reset"
+    seed "echo cargo run --bin seed"
+}

@@ -1,0 +1,20 @@
+// Backend tasks — included by the root lets.kdl.
+
+backend {
+    description "Backend package"
+
+    build {
+        dir "backend"
+        run "echo cargo build"
+    }
+
+    test {
+        dir "backend"
+        run "echo cargo test"
+    }
+
+    check {
+        description "Build then test"
+        steps "backend build" "backend test"
+    }
+}

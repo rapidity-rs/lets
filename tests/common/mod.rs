@@ -1,3 +1,7 @@
+// Each integration-test binary compiles this module independently and may
+// use only a subset of the helpers.
+#![allow(dead_code)]
+
 use std::fs;
 use std::process::Command;
 

@@ -1,0 +1,34 @@
+// Confirmations, selection menus, and text prompts.
+//
+// Try:
+//   lets deploy          (choose an environment, then confirm)
+//   lets --yes deploy    (CI mode: defaults everywhere, no prompts)
+//   lets greet
+//
+// Under --yes: `confirm` auto-accepts, `prompt` and `choose` use their
+// defaults. A `choose` WITHOUT a default refuses to run under --yes —
+// lets never guesses a choice for you. Give every choose a default.
+
+description "Interactive — confirm, choose, prompt"
+
+deploy {
+    description "Deploy with a guard rail"
+    // The menu cursor starts on the default.
+    choose environment "dev" "staging" "prod" default="dev"
+    // {environment} interpolates the selection into the message.
+    confirm "Deploy to {environment}?"
+    run "echo deploying to {environment}"
+}
+
+greet {
+    description "Ask for a name, with a CI-safe default"
+    prompt name "What is your name?" default="world"
+    run "echo hello {name}"
+}
+
+// Confirmation guards hold even when the task runs as a dependency:
+// `lets release` still asks before deploying.
+release {
+    deps "deploy"
+    run "echo tagging release"
+}

@@ -1,0 +1,40 @@
+// Environment variables, .env files, working directories, shells,
+// and platform-specific commands.
+//
+// Try:
+//   lets serve      (env vars set for the child process)
+//   lets show-env   ({$VAR} reads the environment at interpolation time)
+//   lets install    (runs the variant for YOUR platform)
+
+description "Environment & platform"
+
+// `env` sets variables for this command's processes.
+// `env-file` loads more from a dotenv-format file (explicit env wins).
+serve {
+    env PORT="3000" RUST_LOG="debug"
+    env-file ".env.example"
+    run "sh -c 'echo serving on port $PORT with log level $RUST_LOG'"
+}
+
+// {$VAR} interpolates an environment variable into the command string —
+// from the command's own `env` first, then the parent environment.
+show-env {
+    env GREETING="hello from lets"
+    run "echo {$GREETING}"
+}
+
+// `dir` runs the command from another directory; `shell` overrides
+// the default `sh` for this command only.
+inspect {
+    dir "sub"
+    shell "bash"
+    run "pwd"
+}
+
+// One command, per-OS variants. lets picks the right one at runtime.
+install {
+    description "Install native deps for this platform"
+    run-macos "echo brew install libpq"
+    run-linux "echo apt-get install -y libpq-dev"
+    run-windows "echo choco install postgresql"
+}

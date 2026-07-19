@@ -1,0 +1,43 @@
+// Dependencies, steps, run-once semantics, and hooks.
+//
+// Try:
+//   lets ci        (steps run in order; the shared dep runs ONCE)
+//   lets release   (deps run in parallel first, with arguments)
+//   lets --dry-run release
+
+description "Orchestration — deps, steps, and hooks"
+
+// A shared prerequisite. Everything below depends on it, but it
+// executes at most once per invocation — no diamond duplication.
+setup "echo preparing workspace"
+
+lint {
+    deps "setup"
+    run "echo cargo clippy"
+}
+
+test {
+    deps "setup"
+    run "echo cargo test"
+}
+
+build {
+    flag release "-r"
+    run "echo cargo build {?release:--release}"
+}
+
+// `steps` run sequentially, stopping at the first failure.
+ci {
+    description "Full pipeline: lint, then test, then build"
+    steps "lint" "test" "build"
+}
+
+// `deps` run in parallel before the main command. References can
+// pass arguments and flags — validated when the config loads.
+release {
+    description "Ship it"
+    deps "lint" "test" "build --release"
+    before "echo starting release..."
+    run "echo gh release create"
+    after "echo release complete!"
+}

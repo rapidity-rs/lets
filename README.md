@@ -79,6 +79,8 @@ lets --list
 lets build
 ```
 
+Want complete, runnable configs? Every feature is demonstrated in [`examples/`](examples/) — each directory is a self-contained project, validated by the test suite and rendered in the [docs](https://rapidity-rs.github.io/lets/examples/).
+
 ## Features
 
 ### One-liner commands
