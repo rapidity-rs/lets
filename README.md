@@ -150,10 +150,25 @@ $ lets build --release -j 8
 ```
 
 Interpolation syntax:
-- `{name}` — positional arg or valued flag
+- `{name}` — positional arg, valued flag, or config var
 - `{?flag:text}` — emit `text` only when boolean flag is set
 - `{--}` — passthrough: everything after `--`
 - `{$VAR}` — environment variable
+
+### Variables
+
+Define values once, use them anywhere — globally or scoped to a command:
+
+```kdl
+vars {
+    registry "ghcr.io/acme"
+    image "{registry}/app"
+}
+
+push "docker push {image}:latest"
+```
+
+Args and flags shadow vars of the same name; command vars override globals.
 
 ### Dependencies & steps
 

@@ -380,7 +380,7 @@ impl Orchestrator<'_> {
             && !self.dry_run
             && !yes
         {
-            let rendered = interpolate_simple(confirm_msg, &vars);
+            let rendered = interpolate_simple(confirm_msg, &vars, node);
             let confirmed = dialoguer::Confirm::new()
                 .with_prompt(&rendered)
                 .default(false)
@@ -584,7 +584,7 @@ fn interpolate_with_defaults(
             if let Some(flag) = node.flags.iter().find(|f| f.name == name) {
                 return flag.default.clone();
             }
-            None
+            var_lookup(node, name)
         }
     })
 }
@@ -640,10 +640,15 @@ fn run_interactive(node: &CommandNode, yes: bool) -> Result<HashMap<String, Stri
     Ok(vars)
 }
 
-/// Simple interpolation of `{name}` from a variable map (for confirm messages).
-fn interpolate_simple(template: &str, vars: &HashMap<String, String>) -> String {
+/// Simple interpolation of `{name}` for confirm messages: interactive
+/// bindings first, then the node's config vars.
+fn interpolate_simple(
+    template: &str,
+    vars: &HashMap<String, String>,
+    node: &CommandNode,
+) -> String {
     interpolate::render(template, |p| match p {
-        Placeholder::Variable(name) => vars.get(name).cloned(),
+        Placeholder::Variable(name) => vars.get(name).cloned().or_else(|| var_lookup(node, name)),
         _ => None,
     })
 }
@@ -785,12 +790,13 @@ fn interpolate_cmd(
             if let Some(value) = extra_vars.get(name) {
                 return Some(value.clone());
             }
-            get_value(node, matches, name)
+            get_value(node, matches, name).or_else(|| var_lookup(node, name))
         }
     })
 }
 
-/// Extract a value as a string, using the node's flag definitions to determine the type.
+/// Extract a declared arg/flag value as a string. Names that aren't declared
+/// on the node return None (asking clap about unknown ids panics).
 fn get_value(node: &CommandNode, matches: &ArgMatches, name: &str) -> Option<String> {
     if let Some(flag) = node.flags.iter().find(|f| f.name == name) {
         return match flag.value_type {
@@ -800,6 +806,17 @@ fn get_value(node: &CommandNode, matches: &ArgMatches, name: &str) -> Option<Str
             None => None,
         };
     }
+    if node.args.iter().any(|a| a.name == name) {
+        return matches.get_one::<String>(name).cloned();
+    }
+    None
+}
 
-    matches.get_one::<String>(name).cloned()
+/// Look up a config var on the node's merged scope (later entries win).
+fn var_lookup(node: &CommandNode, name: &str) -> Option<String> {
+    node.vars
+        .iter()
+        .rev()
+        .find(|(k, _)| k == name)
+        .map(|(_, v)| v.clone())
 }
