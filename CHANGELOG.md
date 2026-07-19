@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.3.0](https://github.com/rapidity-rs/lets/compare/7a84364575ca36cebe6b4e9ff40fcdd2f345a52e..v0.3.0) - 2026-07-19
+#### Features
+- (**exec**) run-policy always opts a task out of memoization (#25) - ([d3ddd86](https://github.com/rapidity-rs/lets/commit/d3ddd86deaec43fd03cbd97d48bf9f83983c0de5)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**exec**) cap task concurrency with config jobs and --jobs (#24) - ([593609b](https://github.com/rapidity-rs/lets/commit/593609b0bd26d2e8df1b8a198ca160641e393092)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**fingerprint**) skip up-to-date tasks by checksumming sources (#23) - ([857a485](https://github.com/rapidity-rs/lets/commit/857a485610cd21b409f38ec59e0432cbde703f03)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**vars**) global and scoped variables in interpolation (#26) - ([e50b792](https://github.com/rapidity-rs/lets/commit/e50b792192ba88091fea596ba4075bbb61733c59)) - [@taylorFaucett](https://github.com/taylorFaucett)
+#### Miscellaneous Chores
+- (**deps**) bump actions/upload-pages-artifact from 4 to 5 (#31) - ([062efa0](https://github.com/rapidity-rs/lets/commit/062efa0326380a54225a0afb09134e5fc1d27149)) - dependabot[bot], dependabot[bot]
+- (**deps**) bump actions/checkout from 4 to 7 (#30) - ([ed43c7d](https://github.com/rapidity-rs/lets/commit/ed43c7df45e7fa5be8a52afab045cd801a06ff73)) - dependabot[bot], dependabot[bot]
+- (**deps**) bump actions/setup-node from 4 to 7 (#29) - ([149b510](https://github.com/rapidity-rs/lets/commit/149b510fa11cbb23178d6045b99d79d0d33f3b6e)) - dependabot[bot], dependabot[bot]
+- (**deps**) bump amannn/action-semantic-pull-request from 5 to 6 (#28) - ([beabcc6](https://github.com/rapidity-rs/lets/commit/beabcc6cc08317f5367dde4238137d71309a5914)) - dependabot[bot], dependabot[bot]
+- (**deps**) bump softprops/action-gh-release from 2 to 3 (#27) - ([7f7daa5](https://github.com/rapidity-rs/lets/commit/7f7daa5708281d6b770dc09425d0fa3218457b92)) - dependabot[bot], dependabot[bot]
+- (**deps**) bump actions/deploy-pages from 4 to 5 (#5) - ([a55f021](https://github.com/rapidity-rs/lets/commit/a55f021e1d6b64cf0cdda36f471580b4e7ad4f79)) - dependabot[bot], dependabot[bot]
+- (**deps**) bump actions/download-artifact from 4 to 8 (#2) - ([efb6f04](https://github.com/rapidity-rs/lets/commit/efb6f0422d52900b581cccfda20041e4920961c2)) - dependabot[bot], dependabot[bot]
+- (**deps**) bump actions/configure-pages from 5 to 6 (#3) - ([7a84364](https://github.com/rapidity-rs/lets/commit/7a84364575ca36cebe6b4e9ff40fcdd2f345a52e)) - dependabot[bot], dependabot[bot]
+- (**release**) dispatch Homebrew tap bump after cog bump (#32) - ([870615d](https://github.com/rapidity-rs/lets/commit/870615d0eff9700e14fd11cfbca146fd0a9a219e)) - [@taylorFaucett](https://github.com/taylorFaucett)
+
+- - -
+
 ## [v0.2.0](https://github.com/rapidity-rs/lets/compare/59dc34dd84ce27015000c9bee51506c9b48713a9..v0.2.0) - 2026-07-19
 #### Features
 - (**docs**) rebuild documentation site with Astro Starlight - ([856e2af](https://github.com/rapidity-rs/lets/commit/856e2af5b8c7e65929819d4b24ab5d06671ad4ef)) - [@taylorFaucett](https://github.com/taylorFaucett)
