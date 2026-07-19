@@ -29,7 +29,13 @@ const SMOKE: &[(&str, &[&[&str]])] = &[
     ("interactive", &[&["deploy"], &["greet"], &["release"]]),
     (
         "environment",
-        &[&["serve"], &["show-env"], &["install"], &["inspect"]],
+        &[
+            &["push"],
+            &["serve"],
+            &["show-env"],
+            &["install"],
+            &["inspect"],
+        ],
     ),
     ("watch", &[&["dev"], &["test"]]),
     (

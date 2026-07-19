@@ -50,9 +50,23 @@ Import commands from another KDL file. Paths are relative to the including file.
 include "tasks/db.kdl"
 ```
 
+### `vars`
+
+Global variables usable in `{name}` interpolation everywhere. Values resolve
+at load time and may reference earlier vars or the environment (`{$VAR}`).
+Also available inside a command or group, scoped to it and its children.
+Declared args/flags and interactive bindings take precedence over vars.
+
+```kdl
+vars {
+    registry "ghcr.io/acme"
+    image "{registry}/app"
+}
+```
+
 ## Command nodes
 
-Any top-level node that isn't `description`, `config`, or `include` defines a command.
+Any top-level node that isn't `description`, `config`, `vars`, or `include` defines a command.
 
 ### One-liner syntax
 

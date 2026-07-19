@@ -5,6 +5,34 @@ description: Configure environment variables, working directories, shells, and p
 
 Configure environment variables, working directories, shells, and platform-specific behavior.
 
+## Variables (`vars`)
+
+Define reusable values once, reference them anywhere with `{name}`. A
+top-level `vars` block is visible to every command; a `vars` block inside a
+command (or group) is scoped to it and its children, overriding globals:
+
+```kdl
+vars {
+    registry "ghcr.io/acme"
+    image "{registry}/app"       // vars can reference earlier vars
+}
+
+push "docker push {image}:latest"
+
+deploy {
+    vars {
+        env-name "staging"       // overrides any global env-name
+    }
+    run "scripts/deploy.sh {env-name} {image}"
+}
+```
+
+Resolution order for `{name}`: interactive bindings (`prompt`/`choose`),
+then declared args and flags, then command vars, then group vars, then
+globals. Var values are resolved once at config load and may also reference
+the environment with `{$VAR}`. Unlike `env`, vars are pure config-level
+text substitution — they never touch the child process environment.
+
 ## Environment variables
 
 Set environment variables for a command:

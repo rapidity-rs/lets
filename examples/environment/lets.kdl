@@ -1,12 +1,23 @@
-// Environment variables, .env files, working directories, shells,
-// and platform-specific commands.
+// Variables, environment variables, .env files, working directories,
+// shells, and platform-specific commands.
 //
 // Try:
+//   lets push       (config vars interpolated into the command)
 //   lets serve      (env vars set for the child process)
 //   lets show-env   ({$VAR} reads the environment at interpolation time)
 //   lets install    (runs the variant for YOUR platform)
 
-description "Environment & platform"
+description "Environment, variables & platform"
+
+// `vars` are config-level text substitution: define once, reference with
+// {name} anywhere. Values can reference earlier vars. Unlike `env`, they
+// never touch the child process environment.
+vars {
+    registry "ghcr.io/acme"
+    image "{registry}/app"
+}
+
+push "echo docker push {image}:latest"
 
 // `env` sets variables for this command's processes.
 // `env-file` loads more from a dotenv-format file (explicit env wins).

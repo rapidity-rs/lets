@@ -79,6 +79,7 @@ pub(crate) fn parse_source(source: &str, path: &Path) -> Result<CommandTree> {
         config: Config::default(),
         commands: Vec::new(),
         includes: Vec::new(),
+        vars: Vec::new(),
     };
 
     let base_dir = path.parent().unwrap_or(Path::new("."));
@@ -101,6 +102,9 @@ pub(crate) fn parse_source(source: &str, path: &Path) -> Result<CommandTree> {
                     tree.includes.extend(included.includes);
                 }
             }
+            "vars" => {
+                tree.vars.extend(parse_vars_block(node));
+            }
             "cmd" => {
                 tree.commands.push(parse_explicit_command(node)?);
             }
@@ -110,8 +114,66 @@ pub(crate) fn parse_source(source: &str, path: &Path) -> Result<CommandTree> {
         }
     }
 
+    resolve_vars(&mut tree);
     crate::validate::validate(&tree, &ctx)?;
     Ok(tree)
+}
+
+/// Parse a `vars` block: child nodes are `name "value"` pairs.
+fn parse_vars_block(node: &KdlNode) -> Vec<(String, String)> {
+    node.children()
+        .map(|children| {
+            children
+                .nodes()
+                .iter()
+                .filter_map(|child| {
+                    let value = first_string_arg(child)?;
+                    Some((child.name().value().to_string(), value))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Resolve `{name}` references inside var values and merge scopes onto each
+/// node: globals, then each ancestor group's vars, then the node's own —
+/// later entries win at lookup time.
+fn resolve_vars(tree: &mut CommandTree) {
+    let mut globals: Vec<(String, String)> = Vec::new();
+    for (name, value) in std::mem::take(&mut tree.vars) {
+        let rendered = render_var(&value, &globals);
+        globals.push((name, rendered));
+    }
+    for cmd in &mut tree.commands {
+        resolve_node_vars(cmd, &globals);
+    }
+    tree.vars = globals;
+}
+
+fn resolve_node_vars(node: &mut CommandNode, inherited: &[(String, String)]) {
+    let mut merged: Vec<(String, String)> = inherited.to_vec();
+    for (name, value) in std::mem::take(&mut node.vars) {
+        let rendered = render_var(&value, &merged);
+        merged.push((name, rendered));
+    }
+    node.vars = merged;
+    let scope = node.vars.clone();
+    for child in &mut node.children {
+        resolve_node_vars(child, &scope);
+    }
+}
+
+/// Var values may reference earlier vars and the environment.
+fn render_var(value: &str, scope: &[(String, String)]) -> String {
+    crate::interpolate::render(value, |p| match p {
+        crate::interpolate::Placeholder::Variable(name) => scope
+            .iter()
+            .rev()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.clone()),
+        crate::interpolate::Placeholder::EnvVar(name) => std::env::var(name).ok(),
+        _ => None,
+    })
 }
 
 /// Parse a `cmd` node: `cmd name "inline command"` or `cmd name { ... }`.
@@ -162,6 +224,7 @@ fn parse_command_body(
         flags: Vec::new(),
         aliases: Vec::new(),
         run_policy: crate::tree::RunPolicy::default(),
+        vars: Vec::new(),
         sources: Vec::new(),
         generates: Vec::new(),
         preconditions: Vec::new(),
@@ -193,6 +256,9 @@ fn parse_command_body(
                 }
                 "generates" => {
                     cmd.generates = parse_string_list(child);
+                }
+                "vars" => {
+                    cmd.vars.extend(parse_vars_block(child));
                 }
                 "run-policy" => {
                     let value = first_string_arg(child).unwrap_or_default();

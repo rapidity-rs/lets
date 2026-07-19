@@ -72,6 +72,8 @@ pub struct CommandTree {
     pub commands: Vec<CommandNode>,
     /// Paths of files pulled in via `include`, recursively (for --watch).
     pub includes: Vec<std::path::PathBuf>,
+    /// Global variables usable in interpolation, resolved at load time.
+    pub vars: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -210,6 +212,10 @@ pub struct CommandNode {
     pub aliases: Vec<String>,
     /// Whether references to this task memoize (default) or always execute.
     pub run_policy: RunPolicy,
+    /// Variables usable in `{name}` interpolation. After load this holds the
+    /// merged scope: globals, then ancestor groups, then this node's own
+    /// (later entries win).
+    pub vars: Vec<(String, String)>,
     /// File glob patterns this task depends on (used by --watch and
     /// fingerprint-based up-to-date checks).
     pub sources: Vec<String>,
