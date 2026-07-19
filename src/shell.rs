@@ -111,6 +111,23 @@ fn exec_shell_once(command: &str, ctx: &ExecContext, sink: &TaskSink) -> Result<
         cmd.current_dir(dir);
     }
 
+    // The signal-handling machinery may leave SIGINT/SIGTERM blocked in this
+    // thread; the mask survives fork+exec, which would make children immune
+    // to Ctrl-C. Explicitly unblock in the child.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: sigprocmask is async-signal-safe.
+        unsafe {
+            cmd.pre_exec(|| {
+                let mut set = nix::sys::signal::SigSet::empty();
+                set.add(nix::sys::signal::Signal::SIGINT);
+                set.add(nix::sys::signal::Signal::SIGTERM);
+                set.thread_unblock().map_err(std::io::Error::other)
+            });
+        }
+    }
+
     if let Some(timeout) = ctx.timeout {
         // Spawn child in its own process group so timeout kills the entire tree.
         #[cfg(unix)]

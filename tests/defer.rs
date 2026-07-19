@@ -166,12 +166,13 @@ fn sigint_runs_defers_and_exits_130() {
         "#,
     );
     let root = dir.path();
+    let stderr_file = std::fs::File::create(root.join("stderr.log")).unwrap();
 
     let mut cmd = lets_bin();
     cmd.args(["--file", path.to_str().unwrap(), "serve"])
         .current_dir(root)
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stderr(stderr_file);
     // Own process group so we can signal lets + its children like a terminal.
     cmd.process_group(0);
     let mut child = cmd.spawn().unwrap();
@@ -182,17 +183,26 @@ fn sigint_runs_defers_and_exits_130() {
         assert!(Instant::now() < deadline, "serve never started");
         std::thread::sleep(Duration::from_millis(50));
     }
+    // Give lets a beat to finish installing its signal handler.
+    std::thread::sleep(Duration::from_millis(200));
 
     // Emulate Ctrl-C: SIGINT to the whole foreground process group.
-    let pgid = child.id();
-    let status = std::process::Command::new("kill")
-        .args(["-INT", &format!("-{pgid}")])
-        .status()
-        .unwrap();
-    assert!(status.success(), "failed to signal process group");
+    nix::sys::signal::killpg(
+        nix::unistd::Pid::from_raw(child.id() as i32),
+        nix::sys::signal::Signal::SIGINT,
+    )
+    .expect("killpg failed");
 
     let exit = child.wait().unwrap();
-    assert_eq!(exit.code(), Some(130), "expected exit 130, got {exit:?}");
+    let stderr = std::fs::read_to_string(root.join("stderr.log")).unwrap_or_default();
+    assert_eq!(
+        exit.code(),
+        Some(130),
+        "expected exit 130, got {exit:?}; stderr:\n{stderr}"
+    );
     let log = std::fs::read_to_string(root.join("cleanup.log")).unwrap_or_default();
-    assert!(log.contains("CLEANED"), "defer did not run on SIGINT");
+    assert!(
+        log.contains("CLEANED"),
+        "defer did not run on SIGINT; stderr:\n{stderr}"
+    );
 }
