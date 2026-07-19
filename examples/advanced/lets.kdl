@@ -4,6 +4,7 @@
 // Try:
 //   lets init            (skipped once .initialized exists; --force reruns)
 //   lets guarded         (fails until you create allow.txt)
+//   lets stack           (defer tears down even when the run fails)
 //   lets health-check
 //   lets deploy
 //   lets old-deploy          (prints a deprecation warning)
@@ -11,6 +12,15 @@
 //   lets --list              (setup-db is hidden from this list)
 
 description "Advanced — gates, timeouts, retries, and help polish"
+
+// `defer`: guaranteed cleanup — runs on success, failure, or Ctrl-C,
+// in reverse declaration order. `after` only runs on success.
+stack {
+    description "Bring a stack up, always tear it down"
+    defer "echo stack down"
+    run "echo stack up"
+    run "echo running tests against stack"
+}
 
 // `status`: when every check exits 0 the task is up to date and skipped.
 // Deps still run first. Use --force to run anyway.

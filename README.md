@@ -255,6 +255,18 @@ deploy {
 }
 ```
 
+`after` runs on success only. For guaranteed cleanup — success, failure, or Ctrl-C — use `defer`:
+
+```kdl
+integration-test {
+    defer "docker compose down"
+    run "docker compose up --wait"
+    run "cargo test --test integration"
+}
+```
+
+Multiple defers run in reverse order (LIFO). Interrupted runs forward termination to children, run pending defers, and exit 130.
+
 ### Environment variables
 
 Set env vars, load `.env` files:

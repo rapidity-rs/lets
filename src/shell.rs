@@ -152,6 +152,7 @@ fn exec_inherited(mut cmd: process::Command, ctx: &ExecContext) -> Result<()> {
 
     let (tx, rx) = std::sync::mpsc::channel();
     let pid = child.id();
+    let _pgroup = PgroupGuard::register(pid);
 
     std::thread::spawn(move || {
         let result = child.wait();
@@ -186,6 +187,7 @@ fn exec_captured(mut cmd: process::Command, ctx: &ExecContext, sink: &TaskSink) 
     // Command retains its Stdio handles for potential respawn; drop them so
     // the pipe sees EOF when the child exits.
     drop(cmd);
+    let _pgroup = ctx.timeout.map(|_| PgroupGuard::register(child.id()));
 
     // Watchdog thread kills the process group at the deadline while this
     // thread drains the pipe.
@@ -230,6 +232,46 @@ fn kill_process_group(pid: u32) {
     #[cfg(not(unix))]
     {
         let _ = pid;
+    }
+}
+
+/// Children running in their own process groups (timeout-managed): the
+/// terminal's SIGINT never reaches them, so interrupt handling forwards
+/// SIGTERM explicitly via [`terminate_process_groups`].
+static PGROUP_CHILDREN: parking_lot::Mutex<Vec<u32>> = parking_lot::Mutex::new(Vec::new());
+
+/// RAII registration of a process-grouped child for signal forwarding.
+struct PgroupGuard {
+    pid: u32,
+}
+
+impl PgroupGuard {
+    fn register(pid: u32) -> Self {
+        PGROUP_CHILDREN.lock().push(pid);
+        PgroupGuard { pid }
+    }
+}
+
+impl Drop for PgroupGuard {
+    fn drop(&mut self) {
+        PGROUP_CHILDREN.lock().retain(|p| *p != self.pid);
+    }
+}
+
+/// SIGTERM every registered child process group (called from the signal
+/// handler so interrupted runs shut their task trees down gracefully).
+pub(crate) fn terminate_process_groups() {
+    for pid in PGROUP_CHILDREN.lock().iter() {
+        #[cfg(unix)]
+        {
+            use nix::sys::signal::{self, Signal};
+            use nix::unistd::Pid;
+            let _ = signal::killpg(Pid::from_raw(*pid as i32), Signal::SIGTERM);
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = pid;
+        }
     }
 }
 

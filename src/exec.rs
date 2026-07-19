@@ -10,7 +10,7 @@
 //! interpolation to [`crate::interpolate`].
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use clap::ArgMatches;
 use parking_lot::{Condvar, Mutex};
@@ -33,6 +33,8 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches) -> Result<()> {
     let dry_run = matches.get_flag("dry-run");
     let force = matches.get_flag("force");
     let ctx = ExecContext::from_node(node, &tree.config, dry_run)?;
+
+    install_signal_handler();
 
     // Collect every prompt/choose/confirm in the transitive task graph up
     // front, serially, before any (parallel) execution starts. A declined
@@ -88,6 +90,9 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches) -> Result<()> {
         }
         Ok(())
     })();
+    // Cleanup runs whenever the task reached its body — success, failure,
+    // or interrupt.
+    run_defers(node, &ctx, &sink);
     sink.finish(result.is_err());
     result
 }
@@ -102,6 +107,40 @@ fn warn_deprecated(node: &CommandNode) {
                 "\x1b[33mwarning:\x1b[0m '{}' is deprecated. {msg}",
                 node.name
             );
+        }
+    }
+}
+
+/// Set once the process receives SIGINT/SIGTERM; the run unwinds with
+/// command failures, defers still execute, and main exits 130.
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
+
+/// Whether this run was interrupted by a signal.
+pub fn interrupted() -> bool {
+    INTERRUPTED.load(Ordering::SeqCst)
+}
+
+/// First SIGINT/SIGTERM: flag the run and forward SIGTERM to children in
+/// their own process groups (the terminal only reaches our own group).
+/// Second signal: exit immediately.
+fn install_signal_handler() {
+    let result = ctrlc::set_handler(|| {
+        if INTERRUPTED.swap(true, Ordering::SeqCst) {
+            std::process::exit(130);
+        }
+        shell::terminate_process_groups();
+    });
+    if let Err(e) = result {
+        eprintln!("\x1b[33mwarning:\x1b[0m could not install signal handler: {e}");
+    }
+}
+
+/// Run a task's defer commands in reverse declaration order (LIFO).
+/// Defer failures warn but never change the task's result.
+fn run_defers(node: &CommandNode, ctx: &ExecContext, sink: &TaskSink) {
+    for defer in node.orch.defers.iter().rev() {
+        if let Err(e) = exec_shell(defer, ctx, sink) {
+            eprintln!("\x1b[33mwarning:\x1b[0m defer `{defer}` failed: {e}");
         }
     }
 }
@@ -316,6 +355,9 @@ impl Orchestrator<'_> {
         let color_seq = self.color_seq.fetch_add(1, Ordering::Relaxed);
         let sink = TaskSink::for_task(self.mode, &label, node.exec.silent, color_seq);
         let result = self.exec_node_commands(node, key, args, &ctx, &sink);
+        // Cleanup runs whenever the task reached its body — success,
+        // failure, or interrupt.
+        run_defers(node, &ctx, &sink);
         sink.finish(result.is_err());
         result
     }

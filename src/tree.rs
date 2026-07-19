@@ -140,6 +140,9 @@ pub struct Orchestration {
     pub before: Option<String>,
     /// Shell command to run after the main `run`.
     pub after: Option<String>,
+    /// Cleanup commands that run when the task settles — success, failure,
+    /// or interrupt — in reverse declaration order (LIFO).
+    pub defers: Vec<String>,
 }
 
 /// Environment variable configuration.

@@ -186,6 +186,18 @@ before "echo Starting..."
 after "echo Done!"
 ```
 
+### `defer`
+
+Cleanup command that runs when the task settles — success, failure, or
+interrupt. Repeatable; multiple defers run in reverse declaration order
+(LIFO). A failing defer warns but doesn't change the task's result. Defers
+run only if the task reached its body (they don't run when a precondition
+failed, a dep failed, or `status` skipped the task).
+
+```kdl
+defer "docker compose down"
+```
+
 ### `env`
 
 Set environment variables.
