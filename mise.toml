@@ -1,4 +1,5 @@
 [tools]
+"cargo:cargo-edit" = "latest"
 cocogitto = "latest"
 npm = "latest"
 rust = "latest"
