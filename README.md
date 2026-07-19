@@ -254,13 +254,13 @@ Built-in confirmation, text input, and selection menus:
 
 ```kdl
 deploy {
-    choose environment "dev" "staging" "prod"
+    choose environment "dev" "staging" "prod" default="dev"
     confirm "Deploy to {environment}?"
     run "scripts/deploy.sh {environment}"
 }
 ```
 
-Use `--yes` / `-y` to bypass all prompts (CI-friendly).
+Use `--yes` / `-y` to bypass all prompts (CI-friendly): `confirm` auto-accepts, `prompt` and `choose` use their `default`. A `choose` without a default refuses to run under `--yes` — lets never guesses a choice for you.
 
 ### Aliases
 

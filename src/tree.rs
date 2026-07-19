@@ -232,6 +232,8 @@ pub struct ChooseDef {
     pub name: String,
     /// Choices to present.
     pub choices: Vec<String>,
+    /// Default choice (required for --yes / non-interactive runs).
+    pub default: Option<String>,
 }
 
 #[derive(Debug, Clone)]

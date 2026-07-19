@@ -68,11 +68,11 @@ fn prompt_with_yes_uses_default() {
 }
 
 #[test]
-fn choose_with_yes_uses_first() {
+fn choose_with_yes_uses_default() {
     let (_dir, path) = with_temp_kdl(
         r#"
         deploy {
-            choose environment "dev" "staging" "prod"
+            choose environment "dev" "staging" "prod" default="staging"
             run "echo deploying to {environment}"
         }
         "#,
@@ -85,7 +85,53 @@ fn choose_with_yes_uses_first() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("deploying to dev"));
+    assert!(stdout.contains("deploying to staging"));
+}
+
+#[test]
+fn choose_with_yes_and_no_default_errors() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        deploy {
+            choose environment "dev" "staging" "prod"
+            run "echo deploying to {environment}"
+        }
+        "#,
+    );
+
+    // Guessing an environment non-interactively would be dangerous;
+    // --yes without a default must fail, not pick the first choice.
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "--yes", "deploy"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("deploying to"), "{stdout}");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("no default"), "{stderr}");
+}
+
+#[test]
+fn choose_with_invalid_default_rejected_at_load() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        deploy {
+            choose environment "dev" "prod" default="banana"
+            run "echo deploying to {environment}"
+        }
+        "#,
+    );
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "deploy"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not one of the choices"), "{stderr}");
 }
 
 #[test]
@@ -93,7 +139,7 @@ fn choose_and_confirm_with_yes() {
     let (_dir, path) = with_temp_kdl(
         r#"
         deploy {
-            choose environment "dev" "staging" "prod"
+            choose environment "dev" "staging" "prod" default="dev"
             confirm "Deploy to {environment}?"
             run "echo deploying to {environment}"
         }

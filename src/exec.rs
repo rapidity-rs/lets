@@ -330,12 +330,25 @@ fn run_interactive(node: &CommandNode, yes: bool) -> Result<HashMap<String, Stri
     // Process choose nodes first (so confirm can reference them).
     for choose in &node.interactive.chooses {
         let value = if yes {
-            choose.choices.first().cloned().unwrap_or_default()
+            // Never guess a choice non-interactively: require an explicit
+            // default rather than silently picking the first option.
+            choose.default.clone().ok_or_else(|| {
+                Error::Other(format!(
+                    "choose '{}' has no default; cannot run with --yes \
+                     (add default=\"...\" to the choose node)",
+                    choose.name
+                ))
+            })?
         } else {
+            let cursor = choose
+                .default
+                .as_ref()
+                .and_then(|d| choose.choices.iter().position(|c| c == d))
+                .unwrap_or(0);
             let selection = dialoguer::Select::new()
                 .with_prompt(&choose.name)
                 .items(&choose.choices)
-                .default(0)
+                .default(cursor)
                 .interact()
                 .map_err(|e| Error::Other(format!("choose failed: {e}")))?;
             choose.choices[selection].clone()

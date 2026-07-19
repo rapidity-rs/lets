@@ -117,7 +117,7 @@ pub(super) fn parse_prompt(node: &KdlNode) -> Result<PromptDef> {
 
 /// Parse a `choose` node into a `ChooseDef`.
 ///
-/// Supported form: `choose environment "dev" "staging" "prod"`
+/// Supported form: `choose environment "dev" "staging" "prod" default="dev"`
 pub(super) fn parse_choose(node: &KdlNode) -> Result<ChooseDef> {
     let positional = parse_string_list(node);
 
@@ -129,6 +129,19 @@ pub(super) fn parse_choose(node: &KdlNode) -> Result<ChooseDef> {
         .clone();
 
     let choices = positional[1..].to_vec();
+    let default = named_string(node, "default");
 
-    Ok(ChooseDef { name, choices })
+    if let Some(default) = &default
+        && !choices.contains(default)
+    {
+        return Err(Error::ParseNoSpan {
+            message: format!("choose '{name}': default '{default}' is not one of the choices"),
+        });
+    }
+
+    Ok(ChooseDef {
+        name,
+        choices,
+        default,
+    })
 }
