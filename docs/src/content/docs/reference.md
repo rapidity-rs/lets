@@ -411,10 +411,20 @@ cmd alias {
 
 | Syntax | Description |
 |---|---|
-| `{name}` | Positional arg, valued flag, or interactive variable |
+| `{name}` | Positional arg, valued flag, interactive variable, or var |
 | `{?flag:text}` | Emit `text` if boolean flag is set |
-| `{--}` | Passthrough arguments after `--` |
-| `{$VAR}` | Environment variable |
+| `{--}` | Passthrough arguments after `--`, each shell-quoted |
+| `{$VAR}` | Environment variable (task env first, then process; empty when unset) |
+| `{{` / `}}` | Literal `{` / `}` (e.g. `awk '{{print $1}}'`) |
+
+Placeholders resolve in `run`, `run-*`, `before`, `after`, `defer`,
+`precondition`, `status`, and `confirm` strings, and in `env` values
+(vars and `{$VAR}` only there). Unknown placeholders are load errors —
+`lets self check` catches them before anything runs.
+
+Args and flags are additionally exported to child processes as
+`LETS_ARG_<NAME>` / `LETS_FLAG_<NAME>` (uppercased, `-` → `_`); boolean
+flags export `1` only when set.
 
 ## Execution order
 

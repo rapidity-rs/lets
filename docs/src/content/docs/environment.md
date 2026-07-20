@@ -30,7 +30,8 @@ deploy {
 Resolution order for `{name}`: interactive bindings (`prompt`/`choose`),
 then declared args and flags, then command vars, then group vars, then
 globals. Var values are resolved once at config load and may also reference
-the environment with `{$VAR}`. Unlike `env`, vars are pure config-level
+the environment with `{$VAR}`. A var value that references an unknown name
+fails when the config loads. Unlike `env`, vars are pure config-level
 text substitution — they never touch the child process environment.
 
 ## Environment variables
@@ -44,7 +45,10 @@ serve {
 }
 ```
 
-Variables are set in the child process environment — they don't affect your shell.
+Variables are set in the child process environment — they don't affect your
+shell. Values may reference config vars (`{name}`) and the environment
+(`{$VAR}`); args and flags are not in scope for `env` values — use the
+`LETS_ARG_*` / `LETS_FLAG_*` exports instead.
 
 ## Env files
 

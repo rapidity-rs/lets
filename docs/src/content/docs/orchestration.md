@@ -136,7 +136,7 @@ Starting deploy...
 Deploy complete!
 ```
 
-Hooks are simple shell strings — they don't support arguments or interpolation from the command's args/flags (use `run` for that).
+Hooks interpolate exactly like `run`: `{name}` placeholders, `{?flag:text}` conditionals, and `{$VAR}` lookups all resolve against the command's args, flags, and vars. The same is true for `defer`, `precondition`, and `status` strings.
 
 ## Guaranteed cleanup (`defer`)
 

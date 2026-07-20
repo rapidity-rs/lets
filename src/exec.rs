@@ -18,7 +18,7 @@ use parking_lot::{Condvar, Mutex};
 
 use crate::error::{Error, Result};
 use crate::fingerprint;
-use crate::interpolate::{self, Placeholder};
+use crate::interpolate::{self, Placeholder, Resolution};
 use crate::output::{OutputMode, TaskSink};
 use crate::shell::{self, ExecContext, exec_shell};
 use crate::tree::{CommandNode, CommandTree, FlagType, RunPolicy};
@@ -34,7 +34,8 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, project_root: &Path) -> Res
     let yes = matches.get_flag("yes");
     let dry_run = matches.get_flag("dry-run");
     let force = matches.get_flag("force");
-    let ctx = ExecContext::from_node(node, &tree.config, dry_run)?;
+    let mut ctx = ExecContext::from_node(node, &tree.config, dry_run)?;
+    ctx.env.extend(export_env(node, Some(node_matches)));
 
     install_signal_handler();
 
@@ -61,8 +62,18 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, project_root: &Path) -> Res
         .cloned()
         .unwrap_or_default();
 
+    // Every template renders up front: a task whose hooks, gates, or
+    // cleanup can't render must fail before anything executes.
+    let rendered = Renderer {
+        node,
+        matches: Some(node_matches),
+        vars: &interactive_vars,
+        env: &ctx.env,
+    }
+    .render_task()?;
+
     // 1. Preconditions gate the whole task, before any work starts.
-    check_preconditions(node, &ctx, dry_run)?;
+    check_preconditions(&rendered.preconditions, &node.name, &ctx, dry_run)?;
 
     // 2. Parallel deps (run-once).
     orch.run_deps(node)?;
@@ -71,7 +82,7 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, project_root: &Path) -> Res
     orch.run_steps(node)?;
 
     // 4. Status checks: deps may have satisfied them, so they run after.
-    if is_up_to_date(node, &ctx, dry_run, force)? {
+    if is_up_to_date(&rendered.status, &ctx, dry_run, force)? {
         report_up_to_date(&root_key.join(" "));
         return Ok(());
     }
@@ -87,24 +98,10 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, project_root: &Path) -> Res
     // 6. Hooks and main commands. The root command is never prefixed or
     // grouped (it may be interactive); silent still buffers until failure.
     let sink = TaskSink::for_root(node.exec.silent);
-    let result = (|| -> Result<()> {
-        if let Some(before) = &node.orch.before {
-            exec_shell(before, &ctx, &sink)?;
-        }
-
-        for command in node.run.resolve() {
-            let interpolated = interpolate_cmd(command, node, node_matches, &interactive_vars);
-            exec_shell(&interpolated, &ctx, &sink)?;
-        }
-
-        if let Some(after) = &node.orch.after {
-            exec_shell(after, &ctx, &sink)?;
-        }
-        Ok(())
-    })();
+    let result = exec_task_commands(&rendered, &ctx, &sink);
     // Cleanup runs whenever the task reached its body — success, failure,
     // or interrupt.
-    run_defers(node, &ctx, &sink);
+    run_defers(&rendered.defers, &ctx, &sink);
     sink.finish(result.is_err());
     record_freshness(project_root, &root_key, freshness, result.is_ok());
     result
@@ -186,10 +183,10 @@ fn install_signal_handler() {
     }
 }
 
-/// Run a task's defer commands in reverse declaration order (LIFO).
+/// Run a task's rendered defer commands in reverse declaration order (LIFO).
 /// Defer failures warn but never change the task's result.
-fn run_defers(node: &CommandNode, ctx: &ExecContext, sink: &TaskSink) {
-    for defer in node.orch.defers.iter().rev() {
+fn run_defers(defers: &[String], ctx: &ExecContext, sink: &TaskSink) {
+    for defer in defers.iter().rev() {
         if let Err(e) = exec_shell(defer, ctx, sink) {
             eprintln!("\x1b[33mwarning:\x1b[0m defer `{defer}` failed: {e}");
         }
@@ -197,20 +194,21 @@ fn run_defers(node: &CommandNode, ctx: &ExecContext, sink: &TaskSink) {
 }
 
 /// Fail fast when any precondition exits non-zero. Dry-run only previews.
-fn check_preconditions(node: &CommandNode, ctx: &ExecContext, dry_run: bool) -> Result<()> {
-    for pre in &node.preconditions {
+fn check_preconditions(
+    preconditions: &[(String, Option<String>)],
+    task: &str,
+    ctx: &ExecContext,
+    dry_run: bool,
+) -> Result<()> {
+    for (cmd, message) in preconditions {
         if dry_run {
-            println!("[dry-run] precondition: {}", pre.cmd);
+            println!("[dry-run] precondition: {cmd}");
             continue;
         }
-        if !shell::check_shell(&pre.cmd, ctx)? {
-            let detail = pre
-                .message
-                .clone()
-                .unwrap_or_else(|| format!("`{}` failed", pre.cmd));
+        if !shell::check_shell(cmd, ctx)? {
+            let detail = message.clone().unwrap_or_else(|| format!("`{cmd}` failed"));
             return Err(Error::Other(format!(
-                "precondition not met for '{}': {detail}",
-                node.name
+                "precondition not met for '{task}': {detail}"
             )));
         }
     }
@@ -253,17 +251,12 @@ fn canonical_key(target: &CommandNode, tokens: &[String], args: &[String]) -> Ve
 
 /// A task with status checks is up to date when ALL of them exit zero.
 /// Dry-run previews the checks and never skips; --force disables skipping.
-fn is_up_to_date(
-    node: &CommandNode,
-    ctx: &ExecContext,
-    dry_run: bool,
-    force: bool,
-) -> Result<bool> {
-    if node.status.is_empty() {
+fn is_up_to_date(status: &[String], ctx: &ExecContext, dry_run: bool, force: bool) -> Result<bool> {
+    if status.is_empty() {
         return Ok(false);
     }
     if dry_run {
-        for check in &node.status {
+        for check in status {
             println!("[dry-run] status: {check}");
         }
         return Ok(false);
@@ -271,7 +264,7 @@ fn is_up_to_date(
     if force {
         return Ok(false);
     }
-    for check in &node.status {
+    for check in status {
         if !shell::check_shell(check, ctx)? {
             return Ok(false);
         }
@@ -380,7 +373,7 @@ impl Orchestrator<'_> {
             && !self.dry_run
             && !yes
         {
-            let rendered = interpolate_simple(confirm_msg, &vars, node);
+            let rendered = interpolate_simple(confirm_msg, &vars, node)?;
             let confirmed = dialoguer::Confirm::new()
                 .with_prompt(&rendered)
                 .default(false)
@@ -471,17 +464,45 @@ impl Orchestrator<'_> {
     fn exec_node(&self, node: &CommandNode, key: &[String], args: &[String]) -> Result<()> {
         warn_deprecated(node);
 
-        let ctx = ExecContext::from_node(node, &self.tree.config, self.dry_run)?;
+        // Validated at load time; parse again here to get real ArgMatches.
+        let matches = if args.is_empty() {
+            None
+        } else {
+            let argv = std::iter::once(node.name.clone()).chain(args.iter().cloned());
+            let parsed = crate::cli::build_subcommand(node, false)
+                .try_get_matches_from(argv)
+                .map_err(|e| {
+                    Error::Other(format!(
+                        "invalid arguments for task '{}': {e}",
+                        key.join(" ")
+                    ))
+                })?;
+            Some(parsed)
+        };
+
+        let mut ctx = ExecContext::from_node(node, &self.tree.config, self.dry_run)?;
+        ctx.env.extend(export_env(node, matches.as_ref()));
+
+        // Every template renders up front, before any of the task's work.
+        let empty = HashMap::new();
+        let vars = self.interactions.get(key).unwrap_or(&empty);
+        let rendered = Renderer {
+            node,
+            matches: matches.as_ref(),
+            vars,
+            env: &ctx.env,
+        }
+        .render_task()?;
 
         // Preconditions gate the task before any of its work starts.
-        check_preconditions(node, &ctx, self.dry_run)?;
+        check_preconditions(&rendered.preconditions, &node.name, &ctx, self.dry_run)?;
 
         // Nested deps and steps run first; they present through their own sinks.
         self.run_deps(node)?;
         self.run_steps(node)?;
 
         // Status checks may have been satisfied by deps, so they run after.
-        if is_up_to_date(node, &ctx, self.dry_run, self.force)? {
+        if is_up_to_date(&rendered.status, &ctx, self.dry_run, self.force)? {
             report_up_to_date(&key.join(" "));
             return Ok(());
         }
@@ -500,93 +521,213 @@ impl Orchestrator<'_> {
         let color_seq = self.color_seq.fetch_add(1, Ordering::Relaxed);
         let sink = TaskSink::for_task(self.mode, &label, node.exec.silent, color_seq);
         let permit = self.permits.acquire();
-        let result = self.exec_node_commands(node, key, args, &ctx, &sink);
+        let result = exec_task_commands(&rendered, &ctx, &sink);
         drop(permit);
         // Cleanup runs whenever the task reached its body — success,
         // failure, or interrupt.
-        run_defers(node, &ctx, &sink);
+        run_defers(&rendered.defers, &ctx, &sink);
         sink.finish(result.is_err());
         record_freshness(&self.project_root, key, freshness, result.is_ok());
         result
     }
+}
 
-    /// Hooks and run commands of a single task, routed through its sink.
-    fn exec_node_commands(
-        &self,
-        node: &CommandNode,
-        key: &[String],
-        args: &[String],
-        ctx: &ExecContext,
-        sink: &TaskSink,
-    ) -> Result<()> {
-        // Before hook.
-        if let Some(before) = &node.orch.before {
-            exec_shell(before, ctx, sink)?;
-        }
+/// Hooks and run commands of a single rendered task, routed through its sink.
+fn exec_task_commands(rendered: &RenderedTask, ctx: &ExecContext, sink: &TaskSink) -> Result<()> {
+    if let Some(before) = &rendered.before {
+        exec_shell(before, ctx, sink)?;
+    }
+    for command in &rendered.run {
+        exec_shell(command, ctx, sink)?;
+    }
+    if let Some(after) = &rendered.after {
+        exec_shell(after, ctx, sink)?;
+    }
+    Ok(())
+}
 
-        // Main commands.
-        let empty = HashMap::new();
-        let vars = self.interactions.get(key).unwrap_or(&empty);
-        if args.is_empty() {
-            for command in node.run.resolve() {
-                let interpolated = interpolate_with_defaults(command, node, vars);
-                exec_shell(&interpolated, ctx, sink)?;
+/// Fully interpolated shell strings for one task invocation.
+struct RenderedTask {
+    run: Vec<String>,
+    before: Option<String>,
+    after: Option<String>,
+    defers: Vec<String>,
+    preconditions: Vec<(String, Option<String>)>,
+    status: Vec<String>,
+}
+
+/// Placeholder resolution for one task invocation.
+///
+/// With `matches` (command line, or a reference carrying arguments), args
+/// and flags resolve through clap — defaults included. Without, declared
+/// defaults apply and boolean conditionals resolve to their unset state.
+/// Unresolvable placeholders are errors, never silent empty strings.
+struct Renderer<'a> {
+    node: &'a CommandNode,
+    matches: Option<&'a ArgMatches>,
+    /// Interactive bindings (prompt/choose results).
+    vars: &'a HashMap<String, String>,
+    /// The task's resolved environment (env-file + env), for `{$VAR}`.
+    env: &'a [(String, String)],
+}
+
+impl Renderer<'_> {
+    /// Render every shell-bound template of the node up front, before any
+    /// execution: a task whose cleanup or gates can't render must fail
+    /// before it starts, not midway through.
+    fn render_task(&self) -> Result<RenderedTask> {
+        Ok(RenderedTask {
+            run: self
+                .node
+                .run
+                .resolve()
+                .iter()
+                .map(|c| self.render(c))
+                .collect::<Result<_>>()?,
+            before: self
+                .node
+                .orch
+                .before
+                .as_deref()
+                .map(|s| self.render(s))
+                .transpose()?,
+            after: self
+                .node
+                .orch
+                .after
+                .as_deref()
+                .map(|s| self.render(s))
+                .transpose()?,
+            defers: self
+                .node
+                .orch
+                .defers
+                .iter()
+                .map(|s| self.render(s))
+                .collect::<Result<_>>()?,
+            preconditions: self
+                .node
+                .preconditions
+                .iter()
+                .map(|p| Ok((self.render(&p.cmd)?, p.message.clone())))
+                .collect::<Result<_>>()?,
+            status: self
+                .node
+                .status
+                .iter()
+                .map(|s| self.render(s))
+                .collect::<Result<_>>()?,
+        })
+    }
+
+    fn render(&self, template: &str) -> Result<String> {
+        interpolate::render(template, |p| self.resolve(p))
+            .map_err(|e| Error::Other(format!("in task '{}': {e}", self.node.name)))
+    }
+
+    fn resolve(&self, p: Placeholder<'_>) -> Resolution {
+        match p {
+            // Passthrough args are quoted per token: `lets test -- "foo bar"`
+            // must reach the child as one argument.
+            Placeholder::Passthrough => {
+                let Some(matches) = self.matches else {
+                    return Resolution::Skip;
+                };
+                match matches.get_many::<String>("--") {
+                    Some(trailing) => {
+                        let quoted: Vec<String> =
+                            trailing.map(|s| interpolate::shell_quote(s)).collect();
+                        Resolution::Value(quoted.join(" "))
+                    }
+                    None => Resolution::Skip,
+                }
             }
-        } else {
-            // Validated at load time; parse again here to get real ArgMatches.
-            let argv = std::iter::once(node.name.clone()).chain(args.iter().cloned());
-            let matches = crate::cli::build_subcommand(node, false)
-                .try_get_matches_from(argv)
-                .map_err(|e| {
-                    Error::Other(format!(
-                        "invalid arguments for task '{}': {e}",
-                        key.join(" ")
-                    ))
-                })?;
-            for command in node.run.resolve() {
-                let interpolated = interpolate_cmd(command, node, &matches, vars);
-                exec_shell(&interpolated, ctx, sink)?;
+            Placeholder::EnvVar(name) => self
+                .env
+                .iter()
+                .rev()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.clone())
+                .or_else(|| std::env::var(name).ok())
+                .map_or(Resolution::Skip, Resolution::Value),
+            Placeholder::Conditional(flag_name, text) => {
+                let declared = self
+                    .node
+                    .flags
+                    .iter()
+                    .any(|f| f.name == flag_name && f.value_type.is_none());
+                if !declared {
+                    return Resolution::Unknown;
+                }
+                if self.matches.is_some_and(|m| m.get_flag(flag_name)) {
+                    Resolution::Value(text.to_string())
+                } else {
+                    Resolution::Skip
+                }
+            }
+            Placeholder::Variable(name) => {
+                if let Some(value) = self.vars.get(name) {
+                    return Resolution::Value(value.clone());
+                }
+                let from_cli = match self.matches {
+                    Some(matches) => get_value(self.node, matches, name),
+                    None => self
+                        .node
+                        .args
+                        .iter()
+                        .find(|a| a.name == name)
+                        .and_then(|a| a.default.clone())
+                        .or_else(|| {
+                            self.node
+                                .flags
+                                .iter()
+                                .find(|f| f.name == name && f.value_type.is_some())
+                                .and_then(|f| f.default.clone())
+                        }),
+                };
+                from_cli
+                    .or_else(|| self.node.lookup_var(name))
+                    .map_or(Resolution::Unknown, Resolution::Value)
             }
         }
-
-        // After hook.
-        if let Some(after) = &node.orch.after {
-            exec_shell(after, ctx, sink)?;
-        }
-
-        Ok(())
     }
 }
 
-/// Interpolate a run string from interactive bindings and declared defaults.
-/// Used when a command is invoked via deps/steps (no ArgMatches available).
-fn interpolate_with_defaults(
-    command: &str,
-    node: &CommandNode,
-    vars: &HashMap<String, String>,
-) -> String {
-    interpolate::render(command, |p| match p {
-        Placeholder::Passthrough | Placeholder::Conditional(_, _) => None,
-        Placeholder::EnvVar(var_name) => {
-            if let Some((_, v)) = node.env.vars.iter().find(|(k, _)| k == var_name) {
-                Some(v.clone())
-            } else {
-                std::env::var(var_name).ok()
+/// Environment exports mirroring the task's CLI values: `LETS_ARG_<NAME>`
+/// and `LETS_FLAG_<NAME>` (uppercased, `-` → `_`). Boolean flags export "1"
+/// only when set, so `${LETS_FLAG_X:+...}` idioms work; values are exact,
+/// letting scripts quote them safely instead of splicing placeholders.
+fn export_env(node: &CommandNode, matches: Option<&ArgMatches>) -> Vec<(String, String)> {
+    fn mangle(prefix: &str, name: &str) -> String {
+        format!("{prefix}{}", name.to_uppercase().replace('-', "_"))
+    }
+
+    let mut out = Vec::new();
+    for arg in &node.args {
+        let value = match matches {
+            Some(m) => m.get_one::<String>(&arg.name).cloned(),
+            None => arg.default.clone(),
+        };
+        if let Some(v) = value {
+            out.push((mangle("LETS_ARG_", &arg.name), v));
+        }
+    }
+    for flag in &node.flags {
+        if flag.value_type.is_none() {
+            if matches.is_some_and(|m| m.get_flag(&flag.name)) {
+                out.push((mangle("LETS_FLAG_", &flag.name), "1".to_string()));
+            }
+        } else {
+            let value = match matches {
+                Some(m) => get_value(node, m, &flag.name),
+                None => flag.default.clone(),
+            };
+            if let Some(v) = value {
+                out.push((mangle("LETS_FLAG_", &flag.name), v));
             }
         }
-        Placeholder::Variable(name) => {
-            if let Some(value) = vars.get(name) {
-                return Some(value.clone());
-            }
-            if let Some(arg) = node.args.iter().find(|a| a.name == name) {
-                return arg.default.clone();
-            }
-            if let Some(flag) = node.flags.iter().find(|f| f.name == name) {
-                return flag.default.clone();
-            }
-            var_lookup(node, name)
-        }
-    })
+    }
+    out
 }
 
 /// Process interactive prompts and choices, returning variable bindings.
@@ -640,17 +781,25 @@ fn run_interactive(node: &CommandNode, yes: bool) -> Result<HashMap<String, Stri
     Ok(vars)
 }
 
-/// Simple interpolation of `{name}` for confirm messages: interactive
-/// bindings first, then the node's config vars.
+/// Interpolation for confirm messages: interactive bindings first, then the
+/// node's config vars, then `{$VAR}` from the process environment.
 fn interpolate_simple(
     template: &str,
     vars: &HashMap<String, String>,
     node: &CommandNode,
-) -> String {
+) -> Result<String> {
     interpolate::render(template, |p| match p {
-        Placeholder::Variable(name) => vars.get(name).cloned().or_else(|| var_lookup(node, name)),
-        _ => None,
+        Placeholder::Variable(name) => vars
+            .get(name)
+            .cloned()
+            .or_else(|| node.lookup_var(name))
+            .map_or(Resolution::Unknown, Resolution::Value),
+        Placeholder::EnvVar(name) => {
+            std::env::var(name).map_or(Resolution::Skip, Resolution::Value)
+        }
+        _ => Resolution::Unknown,
     })
+    .map_err(|e| Error::Other(format!("in confirm of '{}': {e}", node.name)))
 }
 
 /// Execution state of a task tracked by the [`Registry`].
@@ -760,41 +909,6 @@ fn resolve_node<'a>(
     Some((node, matches))
 }
 
-/// Replace placeholders in the command string with values from ArgMatches + interactive vars.
-fn interpolate_cmd(
-    command: &str,
-    node: &CommandNode,
-    matches: &ArgMatches,
-    extra_vars: &HashMap<String, String>,
-) -> String {
-    interpolate::render(command, |p| match p {
-        Placeholder::Passthrough => matches.get_many::<String>("--").map(|trailing| {
-            let joined: Vec<&str> = trailing.map(|s| s.as_str()).collect();
-            joined.join(" ")
-        }),
-        Placeholder::EnvVar(var_name) => {
-            if let Some((_, v)) = node.env.vars.iter().find(|(k, _)| k == var_name) {
-                Some(v.clone())
-            } else {
-                std::env::var(var_name).ok()
-            }
-        }
-        Placeholder::Conditional(flag_name, text) => {
-            if matches.get_flag(flag_name) {
-                Some(text.to_string())
-            } else {
-                None
-            }
-        }
-        Placeholder::Variable(name) => {
-            if let Some(value) = extra_vars.get(name) {
-                return Some(value.clone());
-            }
-            get_value(node, matches, name).or_else(|| var_lookup(node, name))
-        }
-    })
-}
-
 /// Extract a declared arg/flag value as a string. Names that aren't declared
 /// on the node return None (asking clap about unknown ids panics).
 fn get_value(node: &CommandNode, matches: &ArgMatches, name: &str) -> Option<String> {
@@ -810,13 +924,4 @@ fn get_value(node: &CommandNode, matches: &ArgMatches, name: &str) -> Option<Str
         return matches.get_one::<String>(name).cloned();
     }
     None
-}
-
-/// Look up a config var on the node's merged scope (later entries win).
-fn var_lookup(node: &CommandNode, name: &str) -> Option<String> {
-    node.vars
-        .iter()
-        .rev()
-        .find(|(k, _)| k == name)
-        .map(|(_, v)| v.clone())
 }

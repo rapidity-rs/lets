@@ -114,7 +114,7 @@ pub(crate) fn parse_source(source: &str, path: &Path) -> Result<CommandTree> {
         }
     }
 
-    resolve_vars(&mut tree);
+    resolve_vars(&mut tree)?;
     crate::validate::validate(&tree, &ctx)?;
     Ok(tree)
 }
@@ -138,41 +138,52 @@ fn parse_vars_block(node: &KdlNode) -> Vec<(String, String)> {
 /// Resolve `{name}` references inside var values and merge scopes onto each
 /// node: globals, then each ancestor group's vars, then the node's own —
 /// later entries win at lookup time.
-fn resolve_vars(tree: &mut CommandTree) {
+fn resolve_vars(tree: &mut CommandTree) -> Result<()> {
     let mut globals: Vec<(String, String)> = Vec::new();
     for (name, value) in std::mem::take(&mut tree.vars) {
-        let rendered = render_var(&value, &globals);
+        let rendered = render_var(&name, &value, &globals)?;
         globals.push((name, rendered));
     }
     for cmd in &mut tree.commands {
-        resolve_node_vars(cmd, &globals);
+        resolve_node_vars(cmd, &globals)?;
     }
     tree.vars = globals;
+    Ok(())
 }
 
-fn resolve_node_vars(node: &mut CommandNode, inherited: &[(String, String)]) {
+fn resolve_node_vars(node: &mut CommandNode, inherited: &[(String, String)]) -> Result<()> {
     let mut merged: Vec<(String, String)> = inherited.to_vec();
     for (name, value) in std::mem::take(&mut node.vars) {
-        let rendered = render_var(&value, &merged);
+        let rendered = render_var(&name, &value, &merged)?;
         merged.push((name, rendered));
     }
     node.vars = merged;
     let scope = node.vars.clone();
     for child in &mut node.children {
-        resolve_node_vars(child, &scope);
+        resolve_node_vars(child, &scope)?;
     }
+    Ok(())
 }
 
-/// Var values may reference earlier vars and the environment.
-fn render_var(value: &str, scope: &[(String, String)]) -> String {
+/// Var values may reference earlier vars and the environment (`{$VAR}`,
+/// empty when unset). Anything else — forward references, unknown names —
+/// is a load error.
+fn render_var(name: &str, value: &str, scope: &[(String, String)]) -> Result<String> {
+    use crate::interpolate::{Placeholder, Resolution};
     crate::interpolate::render(value, |p| match p {
-        crate::interpolate::Placeholder::Variable(name) => scope
+        Placeholder::Variable(n) => scope
             .iter()
             .rev()
-            .find(|(k, _)| k == name)
-            .map(|(_, v)| v.clone()),
-        crate::interpolate::Placeholder::EnvVar(name) => std::env::var(name).ok(),
-        _ => None,
+            .find(|(k, _)| k == n)
+            .map(|(_, v)| v.clone())
+            .map_or(Resolution::Unknown, Resolution::Value),
+        Placeholder::EnvVar(n) => std::env::var(n)
+            .ok()
+            .map_or(Resolution::Skip, Resolution::Value),
+        _ => Resolution::Unknown,
+    })
+    .map_err(|e| Error::ParseNoSpan {
+        message: format!("in var '{name}': {e}"),
     })
 }
 

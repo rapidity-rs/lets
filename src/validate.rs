@@ -4,20 +4,141 @@
 //! - All `deps`/`steps` references resolve to existing commands
 //! - Arguments supplied in a reference (or defaults) satisfy the target's CLI
 //! - No dependency cycles exist (direct or indirect, via DFS)
+//! - Every `{…}` placeholder resolves against statically known names
 
 use std::collections::HashSet;
 
 use crate::error::{Error, Result};
+use crate::interpolate::{self, Placeholder, RenderError, Resolution};
 use crate::parse::SourceCtx;
 use crate::tree::{CommandNode, CommandTree};
 
-/// Validate the command tree: check refs resolve, no cycles exist, and
-/// source globs compile.
+/// Validate the command tree: check refs resolve, no cycles exist, source
+/// globs compile, and placeholders resolve.
 pub fn validate(tree: &CommandTree, ctx: &SourceCtx) -> Result<()> {
     validate_refs(tree, &tree.commands, ctx)?;
     validate_no_cycles(tree, &tree.commands)?;
     validate_sources(&tree.commands, ctx)?;
+    validate_placeholders(&tree.commands, ctx)?;
     Ok(())
+}
+
+/// Which placeholder kinds a template may use, besides `{$VAR}` (always
+/// allowed — environment lookups are inherently runtime).
+enum TemplateKind {
+    /// Run commands, hooks, defers, gates: full scope.
+    Shell,
+    /// Confirm messages: interactive bindings and vars.
+    Confirm,
+    /// Env values: vars only.
+    EnvValue,
+}
+
+/// Check every placeholder in shell-bound templates, confirm messages, and
+/// env values against the names statically known for the node. Unknown
+/// placeholders fail at load — never silently at run time.
+fn validate_placeholders(commands: &[CommandNode], ctx: &SourceCtx) -> Result<()> {
+    for cmd in commands {
+        for template in cmd.shell_templates() {
+            check_template(cmd, template, TemplateKind::Shell, ctx)?;
+        }
+        if let Some(confirm) = &cmd.interactive.confirm {
+            check_template(cmd, confirm, TemplateKind::Confirm, ctx)?;
+        }
+        for (key, value) in &cmd.env.vars {
+            check_template(cmd, value, TemplateKind::EnvValue, ctx).map_err(|e| match e {
+                Error::Parse { message, src, span } => Error::Parse {
+                    message: format!("in env value '{key}': {message}"),
+                    src,
+                    span,
+                },
+                other => other,
+            })?;
+        }
+        validate_placeholders(&cmd.children, ctx)?;
+    }
+    Ok(())
+}
+
+fn check_template(
+    cmd: &CommandNode,
+    template: &str,
+    kind: TemplateKind,
+    ctx: &SourceCtx,
+) -> Result<()> {
+    let interactive: HashSet<&str> = cmd
+        .interactive
+        .prompts
+        .iter()
+        .map(|p| p.name.as_str())
+        .chain(cmd.interactive.chooses.iter().map(|c| c.name.as_str()))
+        .collect();
+    let vars: HashSet<&str> = cmd.vars.iter().map(|(k, _)| k.as_str()).collect();
+
+    let variable_known = |name: &str| match kind {
+        TemplateKind::Shell => {
+            interactive.contains(name)
+                || vars.contains(name)
+                || cmd.args.iter().any(|a| a.name == name)
+                || cmd
+                    .flags
+                    .iter()
+                    .any(|f| f.name == name && f.value_type.is_some())
+        }
+        TemplateKind::Confirm => interactive.contains(name) || vars.contains(name),
+        TemplateKind::EnvValue => vars.contains(name),
+    };
+
+    let result = interpolate::render(template, |p| match p {
+        Placeholder::EnvVar(_) => Resolution::Skip,
+        Placeholder::Passthrough => match kind {
+            TemplateKind::Shell => Resolution::Skip,
+            _ => Resolution::Unknown,
+        },
+        Placeholder::Conditional(flag, _) => {
+            let is_bool_flag = cmd
+                .flags
+                .iter()
+                .any(|f| f.name == flag && f.value_type.is_none());
+            if matches!(kind, TemplateKind::Shell) && is_bool_flag {
+                Resolution::Skip
+            } else {
+                Resolution::Unknown
+            }
+        }
+        Placeholder::Variable(name) => {
+            if variable_known(name) {
+                Resolution::Skip
+            } else {
+                Resolution::Unknown
+            }
+        }
+    });
+
+    match result {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            // A boolean flag interpolated as {name} gets a tailored hint.
+            let message = match &e {
+                RenderError::Unknown { placeholder }
+                    if cmd
+                        .flags
+                        .iter()
+                        .any(|f| f.name == *placeholder && f.value_type.is_none()) =>
+                {
+                    format!(
+                        "boolean flag '{placeholder}' cannot be interpolated directly; \
+                         use {{?{placeholder}:text}}"
+                    )
+                }
+                _ => e.to_string(),
+            };
+            Err(ctx.error(
+                format!("in '{}': {message} in \"{template}\"", cmd.name),
+                cmd.span,
+            ))
+        }
+    }
 }
 
 /// Check that every `sources`/`generates` pattern is a valid glob.

@@ -152,8 +152,13 @@ $ lets build --release -j 8
 Interpolation syntax:
 - `{name}` — positional arg, valued flag, or config var
 - `{?flag:text}` — emit `text` only when boolean flag is set
-- `{--}` — passthrough: everything after `--`
+- `{--}` — passthrough: everything after `--`, each token shell-quoted
 - `{$VAR}` — environment variable
+- `{{` and `}}` — literal braces (`awk '{{print $1}}'`, `${{HOME}}`)
+
+Unknown placeholders are load-time errors — a typo in `{name}` can never
+silently corrupt a command. Args and flags are also exported to the child
+process as `LETS_ARG_<NAME>` / `LETS_FLAG_<NAME>` env vars.
 
 ### Variables
 

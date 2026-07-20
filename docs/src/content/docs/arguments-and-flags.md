@@ -131,18 +131,37 @@ If no `type` is specified, the flag is boolean.
 
 ## Interpolation syntax
 
-Placeholders in `run`, `before`, `after`, and `confirm` strings are replaced with values at execution time:
+Placeholders in `run`, `before`, `after`, `defer`, `precondition`, `status`,
+and `confirm` strings are replaced with values at execution time:
 
 | Syntax | Description | Example |
 |---|---|---|
 | `{name}` | Positional arg, valued flag, or interactive variable | `echo {name}` |
 | `{?flag:text}` | Emit `text` if boolean flag is set, empty otherwise | `{?verbose:--verbose}` |
-| `{--}` | All arguments after `--`, space-separated | `cargo test {--}` |
+| `{--}` | All arguments after `--`, each shell-quoted | `cargo test {--}` |
 | `{$VAR}` | Environment variable (node env first, then process env) | `echo {$HOME}` |
+| `{{` / `}}` | Literal `{` / `}` | `awk '{{print $1}}'` |
+
+Placeholders are checked when the config loads: a `{name}` that doesn't match
+a declared arg, valued flag, interactive variable, or var is an error — it
+never silently renders as an empty string. `{$VAR}` is the exception: the
+environment is only knowable at run time, and an unset variable renders empty,
+matching shell behavior.
+
+### Literal braces
+
+Shell syntax that uses braces must be escaped with `{{` and `}}`:
+
+```kdl
+first-column "awk '{{print $1}}' data.txt"
+fallback "echo ${{EDITOR:-vi}}"
+inspect "docker inspect --format '{{{{.State.Running}}}}' app"
+```
 
 ### Passthrough arguments
 
-The `{--}` placeholder passes through everything after `--`:
+The `{--}` placeholder passes through everything after `--`. Each token is
+shell-quoted, so arguments with spaces or special characters arrive intact:
 
 ```kdl
 test {
@@ -153,6 +172,8 @@ test {
 ```
 $ lets test -- --nocapture test_name
 # runs: cargo test --nocapture test_name
+$ lets test -- "some test name"
+# runs: cargo test 'some test name'   (one argument, not three)
 ```
 
 ### Conditional text
@@ -184,6 +205,26 @@ serve {
 ```
 
 The node's `env` values are checked first, then the process environment.
+
+### Values as environment variables
+
+Every arg and flag is also exported to the child process environment as
+`LETS_ARG_<NAME>` / `LETS_FLAG_<NAME>` (uppercased, `-` becomes `_`).
+Boolean flags export `1` only when set. This is the safe way to handle
+values that may contain spaces or shell metacharacters — quote the variable
+in your script instead of splicing a placeholder into the command line:
+
+```kdl
+greet {
+    arg name
+    run "echo \"hello $LETS_ARG_NAME\""
+}
+```
+
+```
+$ lets greet "Taylor Faucett"
+hello Taylor Faucett
+```
 
 ## Combining args and flags
 

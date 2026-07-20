@@ -354,4 +354,29 @@ impl CommandNode {
     pub fn has_children(&self) -> bool {
         !self.children.is_empty()
     }
+
+    /// Look up a config var on the node's merged scope (later entries win).
+    pub fn lookup_var(&self, name: &str) -> Option<String> {
+        self.vars
+            .iter()
+            .rev()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.clone())
+    }
+
+    /// All shell-bound template strings on this node: run commands, hooks,
+    /// defers, and gates. They share one interpolation scope. Env values and
+    /// `confirm` are excluded — they interpolate with narrower scopes.
+    pub fn shell_templates(&self) -> impl Iterator<Item = &str> {
+        self.run
+            .commands
+            .iter()
+            .map(String::as_str)
+            .chain(self.run.platform_run.values().map(String::as_str))
+            .chain(self.orch.before.as_deref())
+            .chain(self.orch.after.as_deref())
+            .chain(self.orch.defers.iter().map(String::as_str))
+            .chain(self.preconditions.iter().map(|p| p.cmd.as_str()))
+            .chain(self.status.iter().map(String::as_str))
+    }
 }

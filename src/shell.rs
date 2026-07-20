@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::error::{Error, Result};
+use crate::interpolate::{self, Placeholder, Resolution};
 use crate::output::TaskSink;
 use crate::tree::{CommandNode, Config};
 
@@ -53,10 +54,27 @@ impl ExecContext {
             }
         }
 
-        // Explicit env vars override env-file.
+        // Explicit env vars override env-file. Values interpolate config vars
+        // and `{$VAR}` lookups against env declared so far (env-file entries,
+        // earlier `env` keys), falling back to the process environment.
         for (k, v) in &node.env.vars {
+            let rendered = interpolate::render(v, |p| match p {
+                Placeholder::Variable(name) => match node.lookup_var(name) {
+                    Some(value) => Resolution::Value(value),
+                    None => Resolution::Unknown,
+                },
+                Placeholder::EnvVar(name) => env
+                    .iter()
+                    .rev()
+                    .find(|(ek, _)| ek == name)
+                    .map(|(_, ev)| ev.clone())
+                    .or_else(|| std::env::var(name).ok())
+                    .map_or(Resolution::Skip, Resolution::Value),
+                _ => Resolution::Unknown,
+            })
+            .map_err(|e| Error::Other(format!("in env value '{k}' of '{}': {e}", node.name)))?;
             env.retain(|(ek, _)| ek != k);
-            env.push((k.clone(), v.clone()));
+            env.push((k.clone(), rendered));
         }
 
         Ok(ExecContext {

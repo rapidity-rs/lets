@@ -235,9 +235,9 @@ pub(crate) fn build_subcommand(node: &CommandNode, sorted: bool) -> Command {
         cmd = cmd.arg(build_flag(flag_def));
     }
 
-    // If any run string contains {--}, register a trailing var arg to capture passthrough args.
-    let has_passthrough = node.run.commands.iter().any(|r| r.contains("{--}"))
-        || node.run.platform_run.values().any(|r| r.contains("{--}"));
+    // If any template contains {--}, register a trailing var arg to capture
+    // passthrough args (hooks and gates interpolate it too).
+    let has_passthrough = node.shell_templates().any(|t| t.contains("{--}"));
     if has_passthrough {
         cmd = cmd.arg(
             clap::Arg::new("--")
