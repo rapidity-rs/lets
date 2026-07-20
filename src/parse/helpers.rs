@@ -122,10 +122,14 @@ pub(super) fn parse_config(node: &KdlNode) -> Result<Config> {
                 "echo" => {
                     config.echo = first_bool_arg(child).unwrap_or(true);
                 }
+                "min-version" => {
+                    // Enforced by the pre-parse gate; stored for reference.
+                    config.min_version = first_string_arg(child);
+                }
                 other => {
                     return Err(Error::Other(format!(
                         "unknown config option '{other}' (expected sorted, shell, output, \
-                         jobs, env, env-file, or echo)"
+                         jobs, env, env-file, echo, or min-version)"
                     )));
                 }
             }

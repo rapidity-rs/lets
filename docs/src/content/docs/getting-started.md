@@ -44,6 +44,10 @@ lets --list
 # Run a command
 lets build
 
+# Or just type `lets` — on a terminal it opens a fuzzy picker
+# over your commands (Esc shows help instead)
+lets
+
 # Get help for a specific command
 lets build --help
 ```

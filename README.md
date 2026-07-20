@@ -475,7 +475,9 @@ build "cargo build" description="Build the project"
 | Command | Description |
 |---|---|
 | `lets --help` | Show help with all commands |
+| `lets` | With no arguments on a terminal: fuzzy-pick a command to run |
 | `lets --list` | Show all commands in a tree |
+| `lets --list --json` | Machine-readable command tree for tooling |
 | `lets --dry-run <cmd>` | Show what would run |
 | `lets --verbose <cmd>` | Echo each command before it runs |
 | `lets --keep-going <cmd>` | Keep running independent tasks after a failure, report all failures |

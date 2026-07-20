@@ -16,7 +16,7 @@ path = "src/main.rs"
 clap = { version = "4.6", features = ["color", "suggestions", "env"] }
 clap_complete = { version = "4.6.0", features = ["unstable-dynamic"] }
 ctrlc = { version = "3.5.2", features = ["termination"] }
-dialoguer = "0.12.0"
+dialoguer = { version = "0.12.0", features = ["fuzzy-select"] }
 dotenvy = "0.15"
 globset = "0.4.19"
 kdl = { version = "6", features = ["span"] }
@@ -34,4 +34,5 @@ nix = { version = "0.31", features = ["signal", "process"] }
 nix = { version = "0.31", features = ["signal", "process"] }
 
 [dev-dependencies]
+serde_json = "1"
 tempfile = "3.27.0"

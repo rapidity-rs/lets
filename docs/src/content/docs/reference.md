@@ -36,6 +36,7 @@ config {
 | `env` | properties | Environment variables applied to every task (task `env` overrides) |
 | `env-file` | string | Project-wide .env file, relative to the config directory (task values override) |
 | `echo` | — | Print each command (dimmed `$ cmd` line) before it runs; `--verbose` forces it on |
+| `min-version` | string | Minimum lets version this config requires; older binaries fail with an upgrade hint before parsing anything else |
 
 Unknown config options are load errors.
 

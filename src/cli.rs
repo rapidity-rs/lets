@@ -138,6 +138,13 @@ pub fn build_cli(tree: &CommandTree) -> Command {
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
+            clap::Arg::new("json")
+                .long("json")
+                .help("With --list: print the command tree as JSON")
+                .action(clap::ArgAction::SetTrue)
+                .requires("list"),
+        )
+        .arg(
             clap::Arg::new("verbose")
                 .long("verbose")
                 .help("Echo each command before it runs")

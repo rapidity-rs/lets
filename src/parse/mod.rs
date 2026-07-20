@@ -74,6 +74,10 @@ pub(crate) fn parse_source(source: &str, path: &Path) -> Result<CommandTree> {
         ctx.error_no_span(e.to_string())
     })?;
 
+    // Version gate first: a config written for a newer lets may use syntax
+    // this binary rejects, and "upgrade lets" beats a parse error.
+    check_min_version(&doc)?;
+
     let mut tree = CommandTree {
         description: None,
         config: Config::default(),
@@ -124,6 +128,51 @@ pub(crate) fn parse_source(source: &str, path: &Path) -> Result<CommandTree> {
     resolve_vars(&mut tree)?;
     crate::validate::validate(&tree, &ctx)?;
     Ok(tree)
+}
+
+/// Enforce `config { min-version "X.Y.Z" }` before anything else is parsed.
+fn check_min_version(doc: &KdlDocument) -> Result<()> {
+    let required = doc
+        .nodes()
+        .iter()
+        .find(|n| n.name().value() == "config")
+        .and_then(|config| config.children())
+        .and_then(|children| {
+            children
+                .nodes()
+                .iter()
+                .find(|n| n.name().value() == "min-version")
+        })
+        .and_then(first_string_arg);
+    let Some(required) = required else {
+        return Ok(());
+    };
+
+    let current = env!("CARGO_PKG_VERSION");
+    if version_parts(&required) > version_parts(current) {
+        return Err(Error::ParseNoSpan {
+            message: format!(
+                "this project requires lets >= {required}, but you have {current} \
+                 (upgrade with `cargo install lets-cli` or your package manager)"
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// Dotted version → numeric parts for lexicographic comparison.
+/// Missing segments are 0; non-numeric segments are ignored.
+fn version_parts(v: &str) -> [u64; 3] {
+    let mut parts = [0u64; 3];
+    for (i, seg) in v.split('.').take(3).enumerate() {
+        parts[i] = seg
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+            .parse()
+            .unwrap_or(0);
+    }
+    parts
 }
 
 /// Parse a `vars` block: children are `name "value"` pairs (static) or

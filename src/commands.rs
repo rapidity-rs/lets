@@ -166,3 +166,111 @@ pub(crate) fn cmd_init() -> error::Result<()> {
     println!("Created lets.kdl with {} task(s)", tasks.len());
     Ok(())
 }
+
+/// Print the command tree as compact JSON for tooling (`lets --list --json`).
+/// Hidden commands are included; consumers filter on `"hidden"`.
+pub(crate) fn print_command_list_json(tree: &tree::CommandTree) {
+    println!(
+        "{{\"description\":{},\"commands\":{}}}",
+        json_opt(tree.description.as_deref()),
+        json_commands(&tree.commands)
+    );
+}
+
+fn json_commands(commands: &[tree::CommandNode]) -> String {
+    let items: Vec<String> = commands.iter().map(json_command).collect();
+    format!("[{}]", items.join(","))
+}
+
+fn json_command(node: &tree::CommandNode) -> String {
+    let args: Vec<String> = node
+        .args
+        .iter()
+        .map(|a| {
+            format!(
+                "{{\"name\":{},\"help\":{},\"required\":{},\"rest\":{},\"type\":{},\
+                 \"default\":{},\"env\":{},\"choices\":{}}}",
+                json_str(&a.name),
+                json_opt(a.help.as_deref()),
+                a.required,
+                a.rest,
+                json_str(value_type_name(a.value_type.as_ref())),
+                json_opt(a.default.as_deref()),
+                json_opt(a.env.as_deref()),
+                json_str_array(&a.choices),
+            )
+        })
+        .collect();
+    let flags: Vec<String> = node
+        .flags
+        .iter()
+        .map(|f| {
+            let type_name = match f.value_type.as_ref() {
+                None => "bool",
+                some => value_type_name(some),
+            };
+            format!(
+                "{{\"name\":{},\"short\":{},\"help\":{},\"type\":{},\"default\":{},\
+                 \"env\":{},\"choices\":{}}}",
+                json_str(&f.name),
+                f.short
+                    .map_or_else(|| "null".to_string(), |c| json_str(&c.to_string())),
+                json_opt(f.help.as_deref()),
+                json_str(type_name),
+                json_opt(f.default.as_deref()),
+                json_opt(f.env.as_deref()),
+                json_str_array(&f.choices),
+            )
+        })
+        .collect();
+
+    format!(
+        "{{\"name\":{},\"description\":{},\"aliases\":{},\"hidden\":{},\"runnable\":{},\
+         \"args\":[{}],\"flags\":[{}],\"commands\":{}}}",
+        json_str(&node.name),
+        json_opt(node.description.as_deref()),
+        json_str_array(&node.aliases),
+        node.hide,
+        node.is_runnable(),
+        args.join(","),
+        flags.join(","),
+        json_commands(&node.children),
+    )
+}
+
+fn value_type_name(ty: Option<&tree::FlagType>) -> &'static str {
+    match ty {
+        Some(tree::FlagType::Int) => "int",
+        Some(tree::FlagType::Float) => "float",
+        Some(tree::FlagType::String) | None => "string",
+    }
+}
+
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn json_opt(s: Option<&str>) -> String {
+    s.map_or_else(|| "null".to_string(), json_str)
+}
+
+fn json_str_array(items: &[String]) -> String {
+    let quoted: Vec<String> = items.iter().map(|s| json_str(s)).collect();
+    format!("[{}]", quoted.join(","))
+}

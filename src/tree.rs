@@ -119,6 +119,8 @@ pub struct Config {
     pub env_file: Option<PathBuf>,
     /// Echo each command line (dimmed) before it runs; `--verbose` forces it.
     pub echo: bool,
+    /// Minimum lets version this config requires (checked before parsing).
+    pub min_version: Option<String>,
 }
 
 /// Configuration for what command to run and on which platforms.
