@@ -233,7 +233,7 @@ fn canonical_key(target: &CommandNode, tokens: &[String], args: &[String]) -> Ve
 
     let mut key = path.to_vec();
     for arg in &target.args {
-        if let Some(value) = matches.get_one::<String>(&arg.name) {
+        if let Some(value) = get_value(target, &matches, &arg.name) {
             key.push(format!("{}={value}", arg.name));
         }
     }
@@ -651,16 +651,23 @@ impl Renderer<'_> {
                 .map(|(_, v)| v.clone())
                 .or_else(|| std::env::var(name).ok())
                 .map_or(Resolution::Skip, Resolution::Value),
-            Placeholder::Conditional(flag_name, text) => {
-                let declared = self
+            // Presence test: boolean flag set, optional/rest arg provided,
+            // or no-default valued flag provided (incl. via env fallback).
+            Placeholder::Conditional(name, text) => {
+                if !self.node.presence_testable(name) {
+                    return Resolution::Unknown;
+                }
+                let is_bool_flag = self
                     .node
                     .flags
                     .iter()
-                    .any(|f| f.name == flag_name && f.value_type.is_none());
-                if !declared {
-                    return Resolution::Unknown;
-                }
-                if self.matches.is_some_and(|m| m.get_flag(flag_name)) {
+                    .any(|f| f.name == name && f.value_type.is_none());
+                let set = match self.matches {
+                    Some(m) if is_bool_flag => m.get_flag(name),
+                    Some(m) => m.contains_id(name),
+                    None => false,
+                };
+                if set {
                     Resolution::Value(text.to_string())
                 } else {
                     Resolution::Skip
@@ -672,19 +679,22 @@ impl Renderer<'_> {
                 }
                 let from_cli = match self.matches {
                     Some(matches) => get_value(self.node, matches, name),
-                    None => self
-                        .node
-                        .args
-                        .iter()
-                        .find(|a| a.name == name)
-                        .and_then(|a| a.default.clone())
-                        .or_else(|| {
+                    None => {
+                        if let Some(arg) = self.node.args.iter().find(|a| a.name == name) {
+                            // Rest args are list-like: absent means empty.
+                            if arg.rest {
+                                Some(arg.default.clone().unwrap_or_default())
+                            } else {
+                                arg.default.clone()
+                            }
+                        } else {
                             self.node
                                 .flags
                                 .iter()
                                 .find(|f| f.name == name && f.value_type.is_some())
                                 .and_then(|f| f.default.clone())
-                        }),
+                        }
+                    }
                 };
                 from_cli
                     .or_else(|| self.node.lookup_var(name))
@@ -706,7 +716,15 @@ fn export_env(node: &CommandNode, matches: Option<&ArgMatches>) -> Vec<(String, 
     let mut out = Vec::new();
     for arg in &node.args {
         let value = match matches {
-            Some(m) => m.get_one::<String>(&arg.name).cloned(),
+            Some(m) => {
+                if arg.rest {
+                    // Raw space-join for env consumption (no shell quoting).
+                    m.get_many::<String>(&arg.name)
+                        .map(|vals| vals.cloned().collect::<Vec<_>>().join(" "))
+                } else {
+                    typed_one(m, &arg.name, arg.value_type.as_ref())
+                }
+            }
             None => arg.default.clone(),
         };
         if let Some(v) = value {
@@ -910,19 +928,38 @@ fn resolve_node<'a>(
     Some((node, matches))
 }
 
-/// Extract a declared arg/flag value as a string. Names that aren't declared
-/// on the node return None (asking clap about unknown ids panics).
-fn get_value(node: &CommandNode, matches: &ArgMatches, name: &str) -> Option<String> {
-    if let Some(flag) = node.flags.iter().find(|f| f.name == name) {
-        return match flag.value_type {
-            Some(FlagType::Int) => matches.get_one::<i64>(name).map(|v| v.to_string()),
-            Some(FlagType::Float) => matches.get_one::<f64>(name).map(|v| v.to_string()),
-            Some(FlagType::String) => matches.get_one::<String>(name).cloned(),
-            None => None,
-        };
+/// Single typed arg/flag value rendered as a string. `ty` None = string.
+fn typed_one(matches: &ArgMatches, name: &str, ty: Option<&FlagType>) -> Option<String> {
+    match ty {
+        Some(FlagType::Int) => matches.get_one::<i64>(name).map(|v| v.to_string()),
+        Some(FlagType::Float) => matches.get_one::<f64>(name).map(|v| v.to_string()),
+        Some(FlagType::String) | None => matches.get_one::<String>(name).cloned(),
     }
-    if node.args.iter().any(|a| a.name == name) {
-        return matches.get_one::<String>(name).cloned();
+}
+
+/// Extract a declared arg/flag value as a string for interpolation. Names
+/// that aren't declared on the node return None (asking clap about unknown
+/// ids panics). Rest args join their values shell-quoted; an absent rest
+/// arg is an empty string, like `{--}`.
+fn get_value(node: &CommandNode, matches: &ArgMatches, name: &str) -> Option<String> {
+    if let Some(arg) = node.args.iter().find(|a| a.name == name) {
+        if arg.rest {
+            let joined = matches
+                .get_many::<String>(name)
+                .map(|vals| {
+                    vals.map(|s| interpolate::shell_quote(s))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .unwrap_or_default();
+            return Some(joined);
+        }
+        return typed_one(matches, name, arg.value_type.as_ref());
+    }
+    if let Some(flag) = node.flags.iter().find(|f| f.name == name) {
+        // Boolean flags have no direct value ({?name:text} tests them).
+        let ty = flag.value_type.as_ref()?;
+        return typed_one(matches, name, Some(ty));
     }
     None
 }

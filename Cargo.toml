@@ -13,7 +13,7 @@ name = "lets"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.6", features = ["color", "suggestions"] }
+clap = { version = "4.6", features = ["color", "suggestions", "env"] }
 clap_complete = { version = "4.6.0", features = ["unstable-dynamic"] }
 ctrlc = { version = "3.5.2", features = ["termination"] }
 dialoguer = "0.12.0"

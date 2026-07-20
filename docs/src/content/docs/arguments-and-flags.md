@@ -81,6 +81,67 @@ copy {
 $ lets copy file.txt backup/
 ```
 
+### Typed arguments
+
+Validate values as numbers with `type`:
+
+```kdl
+wait {
+    arg seconds type="int"
+    run "sleep {seconds}"
+}
+```
+
+```
+$ lets wait 5      # OK
+$ lets wait soon   # error: invalid value 'soon': not a valid integer
+```
+
+### Optional arguments
+
+`required=#false` makes an argument optional without inventing a default.
+Since the value may be absent, plain `{name}` interpolation is rejected at
+load — test presence with `{?name:text}`, or read the exported
+`$LETS_ARG_NAME` with a shell fallback:
+
+```kdl
+greet {
+    arg name required=#false
+    run "echo hello ${{LETS_ARG_NAME:-world}} {?name:(personalized)}"
+}
+```
+
+### Variadic arguments
+
+`rest=#true` captures every remaining value. Must be the last declared
+argument; values interpolate shell-quoted (like `{--}`), and an absent rest
+arg renders empty:
+
+```kdl
+fmt {
+    arg files rest=#true
+    run "prettier --write {files}"
+}
+```
+
+```
+$ lets fmt src/a.ts "src/with space.ts"
+# runs: prettier --write src/a.ts 'src/with space.ts'
+```
+
+### Environment fallback
+
+`env="VAR"` consults an environment variable when the value isn't on the
+command line — resolution order is command line, then `env=`, then
+`default=`:
+
+```kdl
+deploy {
+    arg region env="AWS_REGION" default="us-east-1"
+    run "deploy.sh {region}"
+}
+```
+
 ## Flags
 
 Flags come in two types: **boolean** (on/off) and **valued** (takes a value).
@@ -129,6 +190,38 @@ Supported types:
 
 If no `type` is specified, the flag is boolean.
 
+A valued flag needs a guaranteed value to be interpolated as plain `{name}` —
+give it `default=` or `env=`, or test presence with `{?name:text}`.
+
+### Flag choices
+
+Positional strings after the (optional) short alias restrict the value,
+and imply a valued string flag:
+
+```kdl
+export {
+    flag format "-o" "json" "yaml" "csv" default="json"
+    run "export.sh --format {format}"
+}
+```
+
+```
+$ lets export -o yaml    # OK
+$ lets export -o xml     # error: invalid value 'xml' for '--format'
+```
+
+### Environment fallback
+
+Like args, valued flags accept `env="VAR"` — command line wins, then the
+environment variable, then `default=`:
+
+```kdl
+serve {
+    flag port type="int" env="PORT" default="3000"
+    run "server --port {port}"
+}
+```
+
 ## Interpolation syntax
 
 Placeholders in `run`, `before`, `after`, `defer`, `precondition`, `status`,
@@ -137,7 +230,7 @@ and `confirm` strings are replaced with values at execution time:
 | Syntax | Description | Example |
 |---|---|---|
 | `{name}` | Positional arg, valued flag, or interactive variable | `echo {name}` |
-| `{?flag:text}` | Emit `text` if boolean flag is set, empty otherwise | `{?verbose:--verbose}` |
+| `{?name:text}` | Emit `text` if a boolean flag is set or an optional value was provided | `{?verbose:--verbose}` |
 | `{--}` | All arguments after `--`, each shell-quoted | `cargo test {--}` |
 | `{$VAR}` | Environment variable (node env first, then process env) | `echo {$HOME}` |
 | `{{` / `}}` | Literal `{` / `}` | `awk '{{print $1}}'` |

@@ -237,7 +237,7 @@ pub(crate) fn build_subcommand(node: &CommandNode, sorted: bool) -> Command {
 
     // If any template contains {--}, register a trailing var arg to capture
     // passthrough args (hooks and gates interpolate it too).
-    let has_passthrough = node.shell_templates().any(|t| t.contains("{--}"));
+    let has_passthrough = node.uses_passthrough();
     if has_passthrough {
         cmd = cmd.arg(
             clap::Arg::new("--")
@@ -262,6 +262,14 @@ pub(crate) fn build_subcommand(node: &CommandNode, sorted: bool) -> Command {
     cmd
 }
 
+fn typed_parser(arg: clap::Arg, value_type: Option<&FlagType>) -> clap::Arg {
+    match value_type {
+        Some(FlagType::Int) => arg.value_parser(clap::value_parser!(i64)),
+        Some(FlagType::Float) => arg.value_parser(clap::value_parser!(f64)),
+        Some(FlagType::String) | None => arg,
+    }
+}
+
 fn build_arg(def: &ArgDef) -> clap::Arg {
     let mut arg = clap::Arg::new(leak(&def.name));
 
@@ -269,16 +277,27 @@ fn build_arg(def: &ArgDef) -> clap::Arg {
         arg = arg.help(leak(help));
     }
 
-    if let Some(default) = &def.default {
+    if def.rest {
+        // Variadic: everything left on the command line. `required=#true`
+        // demands at least one value.
+        arg = arg.num_args(if def.required { 1.. } else { 0.. });
+        arg = arg.required(def.required);
+    } else if let Some(default) = &def.default {
         arg = arg.default_value(leak(default));
         arg = arg.required(false);
     } else {
-        arg = arg.required(true);
+        arg = arg.required(def.required);
     }
 
     if !def.choices.is_empty() {
         let values: Vec<&'static str> = def.choices.iter().map(|s| leak(s)).collect();
         arg = arg.value_parser(clap::builder::PossibleValuesParser::new(values));
+    } else {
+        arg = typed_parser(arg, def.value_type.as_ref());
+    }
+
+    if let Some(env) = &def.env {
+        arg = arg.env(leak(env));
     }
 
     arg
@@ -287,18 +306,22 @@ fn build_arg(def: &ArgDef) -> clap::Arg {
 fn build_flag(def: &FlagDef) -> clap::Arg {
     let mut flag = clap::Arg::new(leak(&def.name)).long(leak(&def.name));
 
-    if let Some(ref vt) = def.value_type {
+    if def.value_type.is_some() {
         // Valued flag: takes an argument.
         flag = flag.num_args(1).required(false);
 
-        flag = match vt {
-            FlagType::Int => flag.value_parser(clap::value_parser!(i64)),
-            FlagType::Float => flag.value_parser(clap::value_parser!(f64)),
-            FlagType::String => flag,
-        };
+        if !def.choices.is_empty() {
+            let values: Vec<&'static str> = def.choices.iter().map(|s| leak(s)).collect();
+            flag = flag.value_parser(clap::builder::PossibleValuesParser::new(values));
+        } else {
+            flag = typed_parser(flag, def.value_type.as_ref());
+        }
 
-        if let Some(ref default) = def.default {
+        if let Some(default) = &def.default {
             flag = flag.default_value(leak(default));
+        }
+        if let Some(env) = &def.env {
+            flag = flag.env(leak(env));
         }
     } else {
         // Boolean flag.
@@ -309,7 +332,7 @@ fn build_flag(def: &FlagDef) -> clap::Arg {
         flag = flag.short(ch);
     }
 
-    if let Some(ref help) = def.help {
+    if let Some(help) = &def.help {
         flag = flag.help(leak(help));
     }
 

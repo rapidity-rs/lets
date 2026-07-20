@@ -358,3 +358,191 @@ fn args_and_valued_flags_together() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("deploy staging --replicas 5 --preview"));
 }
+
+fn run_file(path: &std::path::Path, args: &[&str]) -> std::process::Output {
+    let mut argv = vec!["--file", path.to_str().unwrap()];
+    argv.extend_from_slice(args);
+    lets_bin().args(&argv).output().unwrap()
+}
+
+#[test]
+fn rest_arg_captures_remaining_values_quoted() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        pack {
+            arg files rest=#true
+            run "printf '[%s]\n' {files}"
+        }
+        "#,
+    );
+
+    let output = run_file(&path, &["pack", "a", "b c", "d"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "[a]\n[b c]\n[d]", "stdout was: {stdout}");
+
+    // Absent rest arg renders empty (printf still emits one empty slot).
+    let output = run_file(&path, &["pack"]);
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "[]");
+}
+
+#[test]
+fn typed_arg_validates_and_interpolates() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        wait {
+            arg seconds type="int"
+            run "echo waiting {seconds}"
+        }
+        "#,
+    );
+
+    let output = run_file(&path, &["wait", "5"]);
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("waiting 5"));
+
+    let output = run_file(&path, &["wait", "soon"]);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("invalid value"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn optional_arg_presence_conditional_and_env_export() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        greet {
+            arg name required=#false
+            run "echo who=${{LETS_ARG_NAME:-nobody}} {?name:--personal}"
+        }
+        "#,
+    );
+
+    let output = run_file(&path, &["greet", "taylor"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("who=taylor --personal"), "stdout: {stdout}");
+
+    let output = run_file(&path, &["greet"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("who=nobody"), "stdout: {stdout}");
+    assert!(!stdout.contains("--personal"), "stdout: {stdout}");
+}
+
+#[test]
+fn plain_interpolation_of_optional_arg_is_load_error() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        greet {
+            arg name required=#false
+            run "echo hello {name}"
+        }
+        "#,
+    );
+
+    let output = run_file(&path, &["greet"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("may be absent"), "stderr: {stderr}");
+}
+
+#[test]
+fn flag_choices_validate() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        export {
+            flag format "-o" "json" "yaml" default="json"
+            run "echo format={format}"
+        }
+        "#,
+    );
+
+    let output = run_file(&path, &["export", "-o", "yaml"]);
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("format=yaml"));
+
+    let output = run_file(&path, &["export", "-o", "xml"]);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("invalid value"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn env_fallback_supplies_flag_value() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        serve {
+            flag port type="int" env="LETS_TEST_PORT" default="3000"
+            run "echo port={port}"
+        }
+        "#,
+    );
+
+    // Explicit flag wins.
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "serve", "--port", "9999"])
+        .env("LETS_TEST_PORT", "4444")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("port=9999"));
+
+    // Env fallback beats the default.
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "serve"])
+        .env("LETS_TEST_PORT", "4444")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("port=4444"));
+
+    // Neither -> default.
+    let output = run_file(&path, &["serve"]);
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("port=3000"));
+}
+
+#[test]
+fn rest_arg_and_passthrough_conflict_is_load_error() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        pack {
+            arg files rest=#true
+            run "tar cf out.tar {files} {--}"
+        }
+        "#,
+    );
+
+    let output = run_file(&path, &["pack"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("pick one"), "stderr: {stderr}");
+}
+
+#[test]
+fn rest_arg_via_deps_reference() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        pack {
+            arg files rest=#true
+            run "printf '[%s]\n' {files}"
+        }
+        release {
+            deps "pack one two"
+        }
+        "#,
+    );
+
+    let output = run_file(&path, &["release"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[one]\n[two]"), "stdout: {stdout}");
+}

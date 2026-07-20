@@ -290,6 +290,15 @@ pub struct ArgDef {
     pub default: Option<String>,
     /// Allowed values. Empty means any string is accepted.
     pub choices: Vec<String>,
+    /// Value type. None = string.
+    pub value_type: Option<FlagType>,
+    /// Variadic: captures all remaining positional values.
+    pub rest: bool,
+    /// Whether the value must be supplied (`required=#false` opts out).
+    /// Defaults to true for plain args, false for `rest` args.
+    pub required: bool,
+    /// Environment variable consulted when the arg isn't supplied.
+    pub env: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -304,6 +313,10 @@ pub struct FlagDef {
     pub value_type: Option<FlagType>,
     /// Default value (only for valued flags).
     pub default: Option<String>,
+    /// Allowed values (valued flags only).
+    pub choices: Vec<String>,
+    /// Environment variable consulted when the flag isn't supplied.
+    pub env: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -378,5 +391,36 @@ impl CommandNode {
             .chain(self.orch.defers.iter().map(String::as_str))
             .chain(self.preconditions.iter().map(|p| p.cmd.as_str()))
             .chain(self.status.iter().map(String::as_str))
+    }
+
+    /// Whether `{?name:text}` can test this name for presence: boolean
+    /// flags, optional and rest args, and valued flags without defaults —
+    /// everything whose presence actually varies per invocation.
+    pub fn presence_testable(&self, name: &str) -> bool {
+        if let Some(flag) = self.flags.iter().find(|f| f.name == name) {
+            return flag.value_type.is_none() || flag.default.is_none();
+        }
+        if let Some(arg) = self.args.iter().find(|a| a.name == name) {
+            return arg.rest || (!arg.required && arg.default.is_none());
+        }
+        false
+    }
+
+    /// Whether any shell-bound template actually uses `{--}` (escaped
+    /// braces don't count, unlike a substring check).
+    pub fn uses_passthrough(&self) -> bool {
+        let mut found = false;
+        for template in self.shell_templates() {
+            let _ = crate::interpolate::render(template, |p| {
+                if matches!(p, crate::interpolate::Placeholder::Passthrough) {
+                    found = true;
+                }
+                crate::interpolate::Resolution::Skip
+            });
+            if found {
+                return true;
+            }
+        }
+        false
     }
 }

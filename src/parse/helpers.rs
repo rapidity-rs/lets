@@ -41,6 +41,14 @@ pub(super) fn named_int(node: &KdlNode, key: &str) -> Option<i64> {
         .and_then(|e| e.value().as_integer().map(|v| v as i64))
 }
 
+/// Extract a named boolean property from a KDL node (`required=#false`).
+pub(super) fn named_bool(node: &KdlNode, key: &str) -> Option<bool> {
+    node.entries()
+        .iter()
+        .find(|e| e.name().map(|n| n.value()) == Some(key))
+        .and_then(|e| e.value().as_bool())
+}
+
 /// Parse a duration string like "30s", "5m", "1h", "500ms".
 pub(super) fn parse_duration(s: &str) -> std::result::Result<Duration, String> {
     let s = s.trim();

@@ -17,10 +17,87 @@ use crate::tree::{CommandNode, CommandTree};
 /// exist, source globs compile, and placeholders resolve.
 pub fn validate(tree: &CommandTree, ctx: &SourceCtx) -> Result<()> {
     validate_names(&tree.commands, ctx, true)?;
+    validate_inputs(&tree.commands, ctx)?;
     validate_refs(tree, &tree.commands, ctx)?;
     validate_no_cycles(tree, &tree.commands)?;
     validate_sources(&tree.commands, ctx)?;
     validate_placeholders(&tree.commands, ctx)?;
+    Ok(())
+}
+
+/// Structural rules for arg/flag declarations: rest args are last and
+/// unique, type/choices don't conflict, env fallbacks only where a value
+/// exists to fall back to, and rest args don't fight `{--}` for the same
+/// trailing tokens.
+fn validate_inputs(commands: &[CommandNode], ctx: &SourceCtx) -> Result<()> {
+    for cmd in commands {
+        for (i, arg) in cmd.args.iter().enumerate() {
+            if !arg.choices.is_empty() && arg.value_type.is_some() {
+                return Err(ctx.error(
+                    format!(
+                        "arg '{}' on '{}': choices and type= are mutually exclusive \
+                         (choices are always strings)",
+                        arg.name, cmd.name
+                    ),
+                    cmd.span,
+                ));
+            }
+            if arg.rest {
+                if arg.value_type.is_some() {
+                    return Err(ctx.error(
+                        format!(
+                            "rest arg '{}' on '{}' cannot have type= \
+                             (values are strings)",
+                            arg.name, cmd.name
+                        ),
+                        cmd.span,
+                    ));
+                }
+                if i != cmd.args.len() - 1 {
+                    return Err(ctx.error(
+                        format!(
+                            "rest arg '{}' on '{}' must be the last declared arg",
+                            arg.name, cmd.name
+                        ),
+                        cmd.span,
+                    ));
+                }
+                if cmd.uses_passthrough() {
+                    return Err(ctx.error(
+                        format!(
+                            "'{}' declares rest arg '{}' and uses {{--}}: both capture \
+                             trailing tokens; pick one",
+                            cmd.name, arg.name
+                        ),
+                        cmd.span,
+                    ));
+                }
+            }
+        }
+        for flag in &cmd.flags {
+            if !flag.choices.is_empty() && flag.value_type != Some(crate::tree::FlagType::String) {
+                return Err(ctx.error(
+                    format!(
+                        "flag '{}' on '{}': choices and type= are mutually exclusive \
+                         (choices are always strings)",
+                        flag.name, cmd.name
+                    ),
+                    cmd.span,
+                ));
+            }
+            if flag.env.is_some() && flag.value_type.is_none() {
+                return Err(ctx.error(
+                    format!(
+                        "boolean flag '{}' on '{}' cannot have env= \
+                         (only args and valued flags)",
+                        flag.name, cmd.name
+                    ),
+                    cmd.span,
+                ));
+            }
+        }
+        validate_inputs(&cmd.children, ctx)?;
+    }
     Ok(())
 }
 
@@ -170,15 +247,23 @@ fn check_template(
         .collect();
     let vars: HashSet<&str> = cmd.vars.iter().map(|(k, _)| k.as_str()).collect();
 
+    // A plain `{name}` needs a value guaranteed to exist: required args,
+    // declared defaults, env fallbacks, or list-like rest args (empty when
+    // absent). Optional values without any of those must go through
+    // `{?name:text}` or `$LETS_ARG_*` instead.
     let variable_known = |name: &str| match kind {
         TemplateKind::Shell => {
             interactive.contains(name)
                 || vars.contains(name)
-                || cmd.args.iter().any(|a| a.name == name)
-                || cmd
-                    .flags
-                    .iter()
-                    .any(|f| f.name == name && f.value_type.is_some())
+                || cmd.args.iter().any(|a| {
+                    a.name == name
+                        && (a.rest || a.required || a.default.is_some() || a.env.is_some())
+                })
+                || cmd.flags.iter().any(|f| {
+                    f.name == name
+                        && f.value_type.is_some()
+                        && (f.default.is_some() || f.env.is_some())
+                })
         }
         TemplateKind::Confirm => interactive.contains(name) || vars.contains(name),
         TemplateKind::EnvValue => vars.contains(name),
@@ -190,12 +275,8 @@ fn check_template(
             TemplateKind::Shell => Resolution::Skip,
             _ => Resolution::Unknown,
         },
-        Placeholder::Conditional(flag, _) => {
-            let is_bool_flag = cmd
-                .flags
-                .iter()
-                .any(|f| f.name == flag && f.value_type.is_none());
-            if matches!(kind, TemplateKind::Shell) && is_bool_flag {
+        Placeholder::Conditional(name, _) => {
+            if matches!(kind, TemplateKind::Shell) && cmd.presence_testable(name) {
                 Resolution::Skip
             } else {
                 Resolution::Unknown
@@ -213,7 +294,7 @@ fn check_template(
     match result {
         Ok(_) => Ok(()),
         Err(e) => {
-            // A boolean flag interpolated as {name} gets a tailored hint.
+            // Declared-but-not-guaranteed names get tailored hints.
             let message = match &e {
                 RenderError::Unknown { placeholder }
                     if cmd
@@ -224,6 +305,15 @@ fn check_template(
                     format!(
                         "boolean flag '{placeholder}' cannot be interpolated directly; \
                          use {{?{placeholder}:text}}"
+                    )
+                }
+                RenderError::Unknown { placeholder }
+                    if cmd.args.iter().any(|a| a.name == *placeholder)
+                        || cmd.flags.iter().any(|f| f.name == *placeholder) =>
+                {
+                    format!(
+                        "'{placeholder}' may be absent at run time; add default= or env=, \
+                         or use {{?{placeholder}:text}} / $LETS_ARG_* instead"
                     )
                 }
                 _ => e.to_string(),
@@ -584,7 +674,7 @@ mod tests {
         let tree = parse(
             r#"
             deploy {
-                flag replicas "-r" type="int"
+                flag replicas "-r" type="int" default="1"
                 run "deploy --replicas {replicas}"
             }
             ci {

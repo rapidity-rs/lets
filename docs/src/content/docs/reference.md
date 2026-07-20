@@ -160,6 +160,9 @@ Positional argument.
 arg name
 arg name help="Description" default="value"
 arg environment "dev" "staging" "prod"
+arg count type="int" env="COUNT"
+arg label required=#false
+arg files rest=#true
 ```
 
 | Property | Type | Description |
@@ -168,6 +171,15 @@ arg environment "dev" "staging" "prod"
 | *(remaining positional)* | strings | Allowed choices |
 | `help` | string | Help text |
 | `default` | string | Default value (makes arg optional) |
+| `type` | string | Value type: `"string"`, `"int"`, `"float"` (not with choices) |
+| `env` | string | Environment variable consulted when the arg isn't supplied |
+| `required` | bool | `#false` makes the arg optional without a default |
+| `rest` | bool | Variadic: captures all remaining values; must be the last arg |
+
+A rest arg interpolates like `{--}`: each value shell-quoted, empty when
+absent. An optional arg without a default can't be interpolated as plain
+`{name}` (the value may not exist) — test presence with `{?name:text}` or
+read `$LETS_ARG_NAME` with a shell fallback.
 
 ### `flag`
 
@@ -177,15 +189,23 @@ Boolean or valued flag.
 flag verbose
 flag verbose "-v" help="Enable verbose output"
 flag count "-c" type="int" default="3"
+flag format "-o" "json" "yaml" default="json"
+flag port type="int" env="PORT" default="3000"
 ```
 
 | Property | Type | Description |
 |---|---|---|
 | *(first positional)* | string | Flag name (required) |
 | *(second positional)* | string | Short alias (e.g. `"-v"`) |
+| *(remaining positional)* | strings | Allowed choices (implies a valued string flag) |
 | `help` | string | Help text |
-| `type` | string | Value type: `"string"`, `"int"`, `"float"` |
+| `type` | string | Value type: `"string"`, `"int"`, `"float"` (not with choices) |
 | `default` | string | Default value (valued flags only) |
+| `env` | string | Environment variable consulted when the flag isn't passed (valued flags only) |
+
+Value resolution order: command line, then `env=`, then `default=`. A valued
+flag with neither `default=` nor `env=` can't be interpolated as plain
+`{name}`; use `{?name:text}` or `$LETS_FLAG_NAME`.
 
 ### `deps`
 
@@ -439,7 +459,7 @@ cmd alias {
 | Syntax | Description |
 |---|---|
 | `{name}` | Positional arg, valued flag, interactive variable, or var |
-| `{?flag:text}` | Emit `text` if boolean flag is set |
+| `{?name:text}` | Emit `text` if a boolean flag is set or an optional value was provided |
 | `{--}` | Passthrough arguments after `--`, each shell-quoted |
 | `{$VAR}` | Environment variable (task env first, then process; empty when unset) |
 | `{{` / `}}` | Literal `{` / `}` (e.g. `awk '{{print $1}}'`) |

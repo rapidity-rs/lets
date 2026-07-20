@@ -3,15 +3,33 @@
 use crate::error::{Error, Result};
 use crate::tree::{ArgDef, ChooseDef, FlagDef, FlagType, PromptDef};
 
-use super::helpers::{named_string, parse_string_list};
+use super::helpers::{named_bool, named_string, parse_string_list};
 
 use kdl::KdlNode;
+
+/// Parse a `type="…"` property into a `FlagType`. Unknown types are errors.
+fn parse_value_type(node: &KdlNode, owner: &str) -> Result<Option<FlagType>> {
+    match named_string(node, "type").as_deref() {
+        None => Ok(None),
+        Some("string") => Ok(Some(FlagType::String)),
+        Some("int") => Ok(Some(FlagType::Int)),
+        Some("float") => Ok(Some(FlagType::Float)),
+        Some(other) => Err(Error::ParseNoSpan {
+            message: format!(
+                "invalid type '{other}' on '{owner}' (expected string, int, or float)"
+            ),
+        }),
+    }
+}
 
 /// Parse an `arg` node into an `ArgDef`.
 ///
 /// Supported forms:
 ///   arg name help="..." default="..."
 ///   arg environment "dev" "staging" "prod"
+///   arg count type="int" env="COUNT"
+///   arg name required=#false
+///   arg files rest=#true
 pub(super) fn parse_arg(node: &KdlNode) -> Result<ArgDef> {
     let positional = parse_string_list(node);
 
@@ -27,12 +45,22 @@ pub(super) fn parse_arg(node: &KdlNode) -> Result<ArgDef> {
 
     let help = named_string(node, "help");
     let default = named_string(node, "default");
+    let value_type = parse_value_type(node, &name)?;
+    let rest = named_bool(node, "rest").unwrap_or(false);
+    // Plain args default to required (a default makes them optional);
+    // rest args default to optional.
+    let required = named_bool(node, "required").unwrap_or(!rest && default.is_none());
+    let env = named_string(node, "env");
 
     Ok(ArgDef {
         name,
         help,
         default,
         choices,
+        value_type,
+        rest,
+        required,
+        env,
     })
 }
 
@@ -40,8 +68,10 @@ pub(super) fn parse_arg(node: &KdlNode) -> Result<ArgDef> {
 ///
 /// Supported forms:
 ///   flag verbose                                    — boolean
-///   flag dry-run "-d" help="Show what would happen" — boolean with short + help
+///   flag preview "-p" help="Show what would happen" — boolean with short + help
 ///   flag count "-c" type="int" default="3"          — valued flag
+///   flag format "-o" "json" "yaml" default="json"   — valued flag with choices
+///   flag port type="int" env="PORT"                 — env fallback
 pub(super) fn parse_flag(node: &KdlNode) -> Result<FlagDef> {
     let positional = parse_string_list(node);
 
@@ -52,25 +82,37 @@ pub(super) fn parse_flag(node: &KdlNode) -> Result<FlagDef> {
         })?
         .clone();
 
-    // Second positional string like "-d" is the short alias.
-    let short = positional.get(1).and_then(|s| {
-        let s = s.strip_prefix('-').unwrap_or(s);
-        let mut chars = s.chars();
-        let ch = chars.next()?;
-        if chars.next().is_none() {
-            Some(ch)
-        } else {
-            None
+    // A second positional like "-d" is the short alias; remaining positional
+    // strings are choices (which imply a valued flag).
+    let mut rest = &positional[1..];
+    let mut short = None;
+    if let Some(candidate) = rest.first()
+        && let Some(stripped) = candidate.strip_prefix('-')
+    {
+        let mut chars = stripped.chars();
+        match (chars.next(), chars.next()) {
+            (Some(ch), None) => {
+                short = Some(ch);
+                rest = &rest[1..];
+            }
+            _ => {
+                return Err(Error::ParseNoSpan {
+                    message: format!(
+                        "invalid short alias '{candidate}' on flag '{name}' \
+                         (expected a single character like \"-x\")"
+                    ),
+                });
+            }
         }
-    });
+    }
+    let choices: Vec<String> = rest.to_vec();
 
     let help = named_string(node, "help");
-
-    let value_type = named_string(node, "type").map(|t| match t.as_str() {
-        "int" => FlagType::Int,
-        "float" => FlagType::Float,
-        _ => FlagType::String,
-    });
+    let mut value_type = parse_value_type(node, &name)?;
+    // Choices imply a valued string flag.
+    if value_type.is_none() && !choices.is_empty() {
+        value_type = Some(FlagType::String);
+    }
 
     // Default can be a string property or an integer property in KDL.
     let default = named_string(node, "default").or_else(|| {
@@ -79,6 +121,7 @@ pub(super) fn parse_flag(node: &KdlNode) -> Result<FlagDef> {
             .find(|e| e.name().map(|n| n.value()) == Some("default"))
             .map(|e| e.value().to_string())
     });
+    let env = named_string(node, "env");
 
     Ok(FlagDef {
         name,
@@ -86,6 +129,8 @@ pub(super) fn parse_flag(node: &KdlNode) -> Result<FlagDef> {
         help,
         value_type,
         default,
+        choices,
+        env,
     })
 }
 
