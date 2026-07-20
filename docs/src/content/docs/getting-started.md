@@ -11,7 +11,15 @@ This guide takes you from zero to a working `lets` CLI in under 5 minutes.
 cargo install lets-cli
 ```
 
-This installs the `lets` binary to `~/.cargo/bin/`.
+This installs the `lets` binary to `~/.cargo/bin/`. Prebuilt binaries for
+macOS and Linux are on the
+[releases page](https://github.com/rapidity-rs/lets/releases).
+
+:::caution[Windows]
+Windows support is experimental: no prebuilt binaries are published, the
+default shell is `sh`, and `--watch` can't yet stop whole task trees
+([#8](https://github.com/rapidity-rs/lets/issues/8)).
+:::
 
 ## Create your first lets.kdl
 

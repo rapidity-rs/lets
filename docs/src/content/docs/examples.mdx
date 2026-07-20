@@ -6,6 +6,7 @@ description: Complete, runnable lets.kdl files — every one validated by the te
 import { Code } from '@astrojs/starlight/components';
 import basics from '../../../../examples/basics/lets.kdl?raw';
 import argsAndFlags from '../../../../examples/args-and-flags/lets.kdl?raw';
+import escaping from '../../../../examples/escaping/lets.kdl?raw';
 import orchestration from '../../../../examples/orchestration/lets.kdl?raw';
 import outputModes from '../../../../examples/output-modes/lets.kdl?raw';
 import interactive from '../../../../examples/interactive/lets.kdl?raw';
@@ -34,6 +35,13 @@ Typed positional arguments with choices and defaults, boolean and valued
 flags, and `{--}` passthrough.
 
 <Code code={argsAndFlags} lang="kdl" title="examples/args-and-flags/lets.kdl" />
+
+## Escaping & quoting
+
+Literal braces with `{{`/`}}`, shell-quoted `{--}` passthrough, and the
+`LETS_ARG_*` env exports for quote-safe scripting.
+
+<Code code={escaping} lang="kdl" title="examples/escaping/lets.kdl" />
 
 ## Orchestration
 

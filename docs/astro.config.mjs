@@ -32,7 +32,7 @@ export default defineConfig({
         },
         {
           label: 'Reference',
-          items: ['reference', 'shell-integration'],
+          items: ['reference', 'shell-integration', 'upgrading'],
         },
       ],
     }),

@@ -10,6 +10,7 @@ cannot drift from what the tool actually supports.
 |---|---|
 | [`basics`](basics/) | One-liners, help text, nested subcommands, aliases |
 | [`args-and-flags`](args-and-flags/) | Typed args, choices, defaults, boolean/valued flags, `{--}` passthrough |
+| [`escaping`](escaping/) | Literal braces (`{{`/`}}`), shell-quoted `{--}`, `LETS_ARG_*` env exports |
 | [`orchestration`](orchestration/) | Parallel `deps`, sequential `steps`, run-once semantics, arguments in references, hooks |
 | [`output-modes`](output-modes/) | `interleaved` / `group` / `prefixed` output, `silent` |
 | [`interactive`](interactive/) | `confirm`, `choose` with defaults, `prompt`, CI mode with `--yes` |

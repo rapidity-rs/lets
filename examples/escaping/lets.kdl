@@ -1,0 +1,34 @@
+// Literal braces, shell-safe quoting, and env-var exports.
+//
+// Try:
+//   lets first-column
+//   lets fallback
+//   lets inspect
+//   lets print -- "one arg with spaces" two
+//   lets greet "Ada Lovelace"
+
+description "Escaping & quoting — braces, passthrough, env exports"
+
+// {{ and }} render literal braces, so awk programs, shell parameter
+// expansion, and Go-template formats pass through intact. An unescaped
+// unknown {placeholder} is a load error — never a silently empty string.
+first-column "printf 'a 1\\nb 2\\n' | awk '{{print $1}}'"
+
+fallback "echo editor=${{EDITOR:-vi}}"
+
+inspect "echo docker inspect --format '{{{{.State.Running}}}}' app"
+
+// Each token after -- is shell-quoted on interpolation: arguments with
+// spaces reach the child process as one argument.
+print {
+    description "Show how {--} preserves argument boundaries"
+    run "printf '[%s]\\n' {--}"
+}
+
+// Args and flags are also exported as $LETS_ARG_<NAME> / $LETS_FLAG_<NAME>.
+// Quoting the variable in shell is the safe way to handle values that may
+// contain spaces or metacharacters.
+greet {
+    arg name default="world"
+    run "echo \"hello $LETS_ARG_NAME\""
+}

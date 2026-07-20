@@ -64,7 +64,13 @@ cargo install lets-cli
 
 ### From GitHub releases
 
-Download a prebuilt binary from the [releases page](https://github.com/rapidity-rs/lets/releases).
+Download a prebuilt binary from the [releases page](https://github.com/rapidity-rs/lets/releases) (macOS and Linux, x86_64 and aarch64).
+
+> [!NOTE]
+> Windows support is experimental: no prebuilt binaries are published, the
+> default shell is `sh`, and `--watch` can't yet stop whole task trees
+> ([#8](https://github.com/rapidity-rs/lets/issues/8)). `run-windows` and
+> `platform "windows"` exist so cross-platform configs can be written today.
 
 ## Quick start
 
@@ -506,7 +512,7 @@ db {
 }
 ```
 
-See the full [lets.kdl spec reference](SPEC.md) for all supported nodes.
+See the full [reference](https://rapidity-rs.github.io/lets/reference/) for all supported nodes.
 
 ## License
 

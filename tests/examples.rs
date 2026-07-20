@@ -39,6 +39,16 @@ const SMOKE: &[(&str, &[&[&str]])] = &[
     ),
     ("watch", &[&["dev"], &["test"]]),
     (
+        "escaping",
+        &[
+            &["first-column"],
+            &["fallback"],
+            &["inspect"],
+            &["print"],
+            &["greet"],
+        ],
+    ),
+    (
         "advanced",
         &[
             &["stack"],
