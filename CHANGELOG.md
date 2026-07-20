@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.4.0](https://github.com/rapidity-rs/lets/compare/125a37e33523203e1091b1280cd6b9dd1aa66944..v0.4.0) - 2026-07-20
+#### Features
+- (**cli**) JSON listing, bare-invocation picker, and min-version gate - ([82b9f14](https://github.com/rapidity-rs/lets/commit/82b9f14ffbb7b11d7b8edf1d82f9c03a749f20ce)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**cli**) variadic, typed, optional args plus flag choices and env fallbacks - ([b34e818](https://github.com/rapidity-rs/lets/commit/b34e81880611526c947c2ab2eb28aab7d6a89611)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**exec**) command echo, --keep-going, --summary, and CI fold markers - ([0243bff](https://github.com/rapidity-rs/lets/commit/0243bff529743da0660c361eefaa59e35d5c3c40)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**exec**) run commands from the config-file directory - ([3852bfe](https://github.com/rapidity-rs/lets/commit/3852bfe99b1d724017e7832959d98eb98038ecf0)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**interpolate**) strict placeholders, brace escapes, hook interpolation - ([125a37e](https://github.com/rapidity-rs/lets/commit/125a37e33523203e1091b1280cd6b9dd1aa66944)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**parse**) reject typos, duplicate nodes, and colliding names at load - ([f163cb5](https://github.com/rapidity-rs/lets/commit/f163cb557baf9b77e52a922641aa9fddb5ba2499)) - [@taylorFaucett](https://github.com/taylorFaucett)
+- (**vars**) dynamic cmd= vars and project-wide config env - ([9d05819](https://github.com/rapidity-rs/lets/commit/9d058198b4dec1b1859b3a578796e980227e8861)) - [@taylorFaucett](https://github.com/taylorFaucett)
+#### Documentation
+- upgrading guide, escaping example, Windows status, link fixes - ([cd32e66](https://github.com/rapidity-rs/lets/commit/cd32e66fe349dbfb989d0ed8e099b9d30b614b62)) - [@taylorFaucett](https://github.com/taylorFaucett)
+#### Miscellaneous Chores
+- (**release**) commit Cargo.lock and build releases --locked - ([2759aaa](https://github.com/rapidity-rs/lets/commit/2759aaa0809b0b1661339f4bbfae97716e540874)) - [@taylorFaucett](https://github.com/taylorFaucett)
+
+- - -
+
 ## [v0.3.0](https://github.com/rapidity-rs/lets/compare/7a84364575ca36cebe6b4e9ff40fcdd2f345a52e..v0.3.0) - 2026-07-19
 #### Features
 - (**exec**) run-policy always opts a task out of memoization (#25) - ([d3ddd86](https://github.com/rapidity-rs/lets/commit/d3ddd86deaec43fd03cbd97d48bf9f83983c0de5)) - [@taylorFaucett](https://github.com/taylorFaucett)
