@@ -127,3 +127,31 @@ fn dir_task_unaffected_by_file_flag_from_elsewhere() {
     let expected = fs::canonicalize(dir.path()).unwrap();
     assert_eq!(reported, expected, "stdout was: {stdout}");
 }
+
+#[test]
+fn file_flag_accepts_equals_and_bundled_forms() {
+    let (_dir, path) = with_temp_kdl("hello \"echo hi\"\n");
+    let elsewhere = tempfile::tempdir().unwrap();
+
+    for args in [
+        vec![format!("--file={}", path.display()), "hello".to_string()],
+        vec![format!("-f{}", path.display()), "hello".to_string()],
+        vec![
+            "--file".to_string(),
+            path.display().to_string(),
+            "hello".to_string(),
+        ],
+    ] {
+        let output = lets_bin()
+            .args(&args)
+            .current_dir(elsewhere.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "args {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "hi");
+    }
+}

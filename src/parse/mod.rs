@@ -84,8 +84,15 @@ pub(crate) fn parse_source(source: &str, path: &Path) -> Result<CommandTree> {
 
     let base_dir = path.parent().unwrap_or(Path::new("."));
 
+    let mut seen_singletons: std::collections::HashSet<&str> = std::collections::HashSet::new();
     for node in doc.nodes() {
         let name = node.name().value();
+        if matches!(name, "description" | "config") && !seen_singletons.insert(name) {
+            return Err(ctx.error(
+                format!("duplicate top-level '{name}': only one is allowed"),
+                node.span(),
+            ));
+        }
         match name {
             "description" => {
                 tree.description = first_string_arg(node);
@@ -250,11 +257,50 @@ fn parse_command_body(
         interactive: Interactive::default(),
         children: Vec::new(),
     };
+    // Nodes that hold a single value: a repeat would silently discard the
+    // earlier one, so it's rejected. List-like nodes (deps, env, run, …)
+    // extend instead.
+    const SCALAR_NODES: &[&str] = &[
+        "description",
+        "long-description",
+        "examples",
+        "run-policy",
+        "hide",
+        "deprecated",
+        "before",
+        "after",
+        "env-file",
+        "dir",
+        "shell",
+        "confirm",
+        "timeout",
+        "retry",
+        "silent",
+        "run-macos",
+        "run-linux",
+        "run-windows",
+    ];
 
     // Block: `task-name { ... }`
     if let Some(children) = node.children() {
+        let mut seen_scalars: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for child in children.nodes() {
             let child_name = child.name().value();
+            // `quiet` is an alias for `silent`; they share one slot.
+            let scalar_key = if child_name == "quiet" {
+                "silent"
+            } else {
+                child_name
+            };
+            if SCALAR_NODES.contains(&scalar_key) && !seen_scalars.insert(scalar_key) {
+                return Err(Error::ParseNoSpan {
+                    message: format!(
+                        "duplicate '{child_name}' in '{}': only one is allowed, \
+                         and a repeat would silently replace the first",
+                        cmd.name
+                    ),
+                });
+            }
             match child_name {
                 "description" => {
                     cmd.description = first_string_arg(child);
@@ -263,10 +309,10 @@ fn parse_command_body(
                     cmd.long_description = first_string_arg(child);
                 }
                 "sources" => {
-                    cmd.sources = parse_string_list(child);
+                    cmd.sources.extend(parse_string_list(child));
                 }
                 "generates" => {
-                    cmd.generates = parse_string_list(child);
+                    cmd.generates.extend(parse_string_list(child));
                 }
                 "vars" => {
                     cmd.vars.extend(parse_vars_block(child));
@@ -318,10 +364,10 @@ fn parse_command_body(
                     cmd.flags.push(parse_flag(child)?);
                 }
                 "deps" => {
-                    cmd.orch.deps = parse_task_refs(child);
+                    cmd.orch.deps.extend(parse_task_refs(child));
                 }
                 "steps" => {
-                    cmd.orch.steps = parse_task_refs(child);
+                    cmd.orch.steps.extend(parse_task_refs(child));
                 }
                 "before" => {
                     cmd.orch.before = first_string_arg(child);
@@ -335,7 +381,7 @@ fn parse_command_body(
                     }
                 }
                 "env" => {
-                    cmd.env.vars = parse_env(child);
+                    cmd.env.vars.extend(parse_env(child));
                 }
                 "env-file" => {
                     cmd.env.file = first_string_arg(child).map(PathBuf::from);
@@ -347,7 +393,7 @@ fn parse_command_body(
                     cmd.exec.shell = first_string_arg(child);
                 }
                 "platform" => {
-                    cmd.run.platform = parse_platform_list(child)?;
+                    cmd.run.platform.extend(parse_platform_list(child)?);
                 }
                 "run-macos" => {
                     if let Some(v) = first_string_arg(child) {
@@ -374,7 +420,7 @@ fn parse_command_body(
                     cmd.interactive.chooses.push(parse_choose(child)?);
                 }
                 "alias" => {
-                    cmd.aliases = parse_string_list(child);
+                    cmd.aliases.extend(parse_string_list(child));
                 }
                 "timeout" => {
                     if let Some(s) = first_string_arg(child) {
@@ -401,11 +447,14 @@ fn parse_command_body(
                 }
                 other => {
                     if let Some(suggestion) = check_typo(other) {
-                        eprintln!(
-                            "\x1b[33mwarning:\x1b[0m unknown node '{other}' in '{}' \
-                             (did you mean '{suggestion}'?). Treating as subcommand.",
-                            cmd.name
-                        );
+                        return Err(Error::ParseNoSpan {
+                            message: format!(
+                                "unknown node '{other}' in '{}': did you mean '{suggestion}'? \
+                                 (rename it, or write `cmd {other}` to define a subcommand \
+                                 with this name)",
+                                cmd.name
+                            ),
+                        });
                     }
                     cmd.children.push(parse_command(child)?);
                 }

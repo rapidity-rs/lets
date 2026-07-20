@@ -128,7 +128,7 @@ fn run() -> error::Result<()> {
         if !config_found {
             return handle_no_config();
         }
-        commands::print_command_list(&tree);
+        commands::print_command_list(&tree, false);
         return Ok(());
     }
 
@@ -183,6 +183,10 @@ fn handle_self(
                 "lets.kdl is valid ({} commands)",
                 commands::count_commands(tree)
             );
+            // The parsed tree, hidden commands included: an unintended
+            // subcommand (e.g. a misplaced keyword) shows up here.
+            println!();
+            commands::print_command_list(tree, true);
             Ok(())
         }
         Some(("completions", sub_matches)) => {
@@ -233,9 +237,23 @@ fn handle_no_config() -> error::Result<()> {
 
 fn resolve_config_path() -> error::Result<PathBuf> {
     let args: Vec<String> = std::env::args().collect();
-    for i in 0..args.len() {
-        if (args[i] == "--file" || args[i] == "-f") && i + 1 < args.len() {
-            let path = PathBuf::from(&args[i + 1]);
+    for i in 1..args.len() {
+        let arg = &args[i];
+        // Match every spelling clap accepts: --file P, --file=P, -f P, -fP.
+        let file_arg = if arg == "--file" || arg == "-f" {
+            args.get(i + 1).cloned()
+        } else if let Some(rest) = arg.strip_prefix("--file=") {
+            Some(rest.to_string())
+        } else if let Some(rest) = arg.strip_prefix("-f")
+            && !arg.starts_with("--")
+            && !rest.is_empty()
+        {
+            Some(rest.to_string())
+        } else {
+            None
+        };
+        if let Some(file_arg) = file_arg {
+            let path = PathBuf::from(file_arg);
             if path.is_file() {
                 return Ok(path);
             }

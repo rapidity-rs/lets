@@ -157,13 +157,13 @@ fn flag_with_short_and_help() {
     let tree = parse(
         r#"
         deploy {
-            flag dry-run "-d" help="Show what would happen"
+            flag preview "-d" help="Show what would happen"
             run "deploy.sh"
         }
         "#,
     );
     let flag = &tree.commands[0].flags[0];
-    assert_eq!(flag.name, "dry-run");
+    assert_eq!(flag.name, "preview");
     assert_eq!(flag.short, Some('d'));
     assert_eq!(flag.help.as_deref(), Some("Show what would happen"));
 }
@@ -225,13 +225,13 @@ fn flag_typed_string() {
     let tree = parse(
         r#"
         run-cmd {
-            flag output "-o" type="string" default="json"
-            run "cmd --output {output}"
+            flag format "-o" type="string" default="json"
+            run "cmd --format {format}"
         }
         "#,
     );
     let flag = &tree.commands[0].flags[0];
-    assert_eq!(flag.name, "output");
+    assert_eq!(flag.name, "format");
     assert_eq!(flag.value_type, Some(FlagType::String));
     assert_eq!(flag.default.as_deref(), Some("json"));
 }
@@ -842,4 +842,209 @@ fn inline_cmd_plus_block_run() {
     assert_eq!(cmd.run.commands.len(), 2);
     assert_eq!(cmd.run.commands[0], "echo inline");
     assert_eq!(cmd.run.commands[1], "echo extra");
+}
+
+fn parse_err(input: &str) -> String {
+    match parse_source(input, &PathBuf::from("test.kdl")) {
+        Ok(_) => panic!("expected parse error for:\n{input}"),
+        Err(e) => e.to_string(),
+    }
+}
+
+#[test]
+fn repeated_list_nodes_extend() {
+    let tree = parse(
+        r#"
+        a "echo a"
+        b "echo b"
+        all {
+            deps "a"
+            deps "b"
+            env X="1"
+            env Y="2"
+            alias "one"
+            alias "two"
+            sources "src/**"
+            sources "Cargo.toml"
+        }
+        "#,
+    );
+    let cmd = &tree.commands[2];
+    assert_eq!(cmd.orch.deps.len(), 2);
+    assert_eq!(cmd.env.vars.len(), 2);
+    assert_eq!(cmd.aliases, vec!["one", "two"]);
+    assert_eq!(cmd.sources.len(), 2);
+}
+
+#[test]
+fn repeated_scalar_node_is_error() {
+    let err = parse_err(
+        r#"
+        build {
+            description "one"
+            description "two"
+            run "cargo build"
+        }
+        "#,
+    );
+    assert!(err.contains("duplicate 'description'"), "was: {err}");
+
+    let err = parse_err(
+        r#"
+        build {
+            silent
+            quiet
+            run "cargo build"
+        }
+        "#,
+    );
+    assert!(err.contains("duplicate 'quiet'"), "was: {err}");
+}
+
+#[test]
+fn duplicate_top_level_description_is_error() {
+    let err = parse_err(
+        r#"
+        description "one"
+        description "two"
+        "#,
+    );
+    assert!(
+        err.contains("duplicate top-level 'description'"),
+        "was: {err}"
+    );
+}
+
+#[test]
+fn keyword_typo_is_error() {
+    let err = parse_err(
+        r#"
+        build {
+            descriptoin "oops"
+            run "cargo build"
+        }
+        "#,
+    );
+    assert!(err.contains("did you mean 'description'?"), "was: {err}");
+}
+
+#[test]
+fn unknown_node_still_becomes_subcommand() {
+    let tree = parse(
+        r#"
+        db {
+            migrate "diesel migration run"
+        }
+        "#,
+    );
+    assert_eq!(tree.commands[0].children[0].name, "migrate");
+}
+
+#[test]
+fn self_command_name_is_reserved() {
+    let err = parse_err(r#"self "echo mine""#);
+    assert!(err.contains("reserved"), "was: {err}");
+
+    let err = parse_err(
+        r#"
+        mine {
+            alias "self"
+            run "echo mine"
+        }
+        "#,
+    );
+    assert!(err.contains("reserved"), "was: {err}");
+}
+
+#[test]
+fn duplicate_sibling_names_are_errors() {
+    let err = parse_err(
+        r#"
+        build "cargo build"
+        build "cargo build --release"
+        "#,
+    );
+    assert!(err.contains("collides"), "was: {err}");
+
+    let err = parse_err(
+        r#"
+        test "cargo test"
+        build {
+            alias "test"
+            run "cargo build"
+        }
+        "#,
+    );
+    assert!(err.contains("alias 'test'"), "was: {err}");
+}
+
+#[test]
+fn nested_duplicates_are_scoped_to_siblings() {
+    // The same name under different parents is fine.
+    let tree = parse(
+        r#"
+        db {
+            reset "echo db"
+        }
+        cache {
+            reset "echo cache"
+        }
+        "#,
+    );
+    assert_eq!(tree.commands.len(), 2);
+}
+
+#[test]
+fn reserved_global_flag_name_is_error() {
+    let err = parse_err(
+        r#"
+        build {
+            flag force
+            run "cargo build {?force:--force}"
+        }
+        "#,
+    );
+    assert!(err.contains("reserved by the built-in"), "was: {err}");
+}
+
+#[test]
+fn reserved_global_flag_short_is_error() {
+    let err = parse_err(
+        r#"
+        build {
+            flag fast "-f"
+            run "cargo build {?fast:--fast}"
+        }
+        "#,
+    );
+    assert!(err.contains("'-f'"), "was: {err}");
+    assert!(err.contains("reserved"), "was: {err}");
+}
+
+#[test]
+fn duplicate_arg_flag_ids_are_errors() {
+    let err = parse_err(
+        r#"
+        build {
+            arg target
+            flag target "-t" type="string" default="x"
+            run "echo {target}"
+        }
+        "#,
+    );
+    assert!(
+        err.contains("duplicate arg/flag name 'target'"),
+        "was: {err}"
+    );
+
+    let err = parse_err(
+        r#"
+        build {
+            flag alpha "-a"
+            flag apple "-a"
+            run "echo {?alpha:a} {?apple:b}"
+        }
+        "#,
+    );
+    assert!(err.contains("duplicate short flag '-a'"), "was: {err}");
 }

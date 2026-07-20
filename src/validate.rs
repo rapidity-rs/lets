@@ -13,13 +13,108 @@ use crate::interpolate::{self, Placeholder, RenderError, Resolution};
 use crate::parse::SourceCtx;
 use crate::tree::{CommandNode, CommandTree};
 
-/// Validate the command tree: check refs resolve, no cycles exist, source
-/// globs compile, and placeholders resolve.
+/// Validate the command tree: names are usable, refs resolve, no cycles
+/// exist, source globs compile, and placeholders resolve.
 pub fn validate(tree: &CommandTree, ctx: &SourceCtx) -> Result<()> {
+    validate_names(&tree.commands, ctx, true)?;
     validate_refs(tree, &tree.commands, ctx)?;
     validate_no_cycles(tree, &tree.commands)?;
     validate_sources(&tree.commands, ctx)?;
     validate_placeholders(&tree.commands, ctx)?;
+    Ok(())
+}
+
+/// Built-in global flags every command inherits; user flags may not reuse
+/// their names or shorts (clap would panic on the duplicate, or silently
+/// shadow the built-in).
+const RESERVED_FLAG_NAMES: &[&str] = &[
+    "file", "yes", "dry-run", "output", "watch", "force", "jobs", "help",
+];
+const RESERVED_FLAG_SHORTS: &[char] = &['f', 'y', 'j', 'h'];
+
+/// Check command names, aliases, and arg/flag ids for collisions that would
+/// break the generated CLI: duplicate siblings, the reserved `self` name,
+/// duplicate arg/flag ids on one command, and built-in global flags.
+fn validate_names(commands: &[CommandNode], ctx: &SourceCtx, top_level: bool) -> Result<()> {
+    let mut labels: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
+    for cmd in commands {
+        for label in
+            std::iter::once(cmd.name.as_str()).chain(cmd.aliases.iter().map(String::as_str))
+        {
+            if top_level && label == "self" {
+                return Err(ctx.error(
+                    "'self' is reserved for lets built-in commands (lets self init/check/…)",
+                    cmd.span,
+                ));
+            }
+            if let Some(owner) = labels.insert(label, cmd.name.as_str()) {
+                let what = if label == cmd.name {
+                    "command name"
+                } else {
+                    "alias"
+                };
+                return Err(ctx.error(
+                    format!("{what} '{label}' on '{}' collides with '{owner}'", cmd.name),
+                    cmd.span,
+                ));
+            }
+        }
+
+        let mut ids: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut shorts: std::collections::HashSet<char> = std::collections::HashSet::new();
+        for arg in &cmd.args {
+            if arg.name == "help" {
+                return Err(ctx.error(
+                    format!("arg name 'help' on '{}' is reserved", cmd.name),
+                    cmd.span,
+                ));
+            }
+            if !ids.insert(&arg.name) {
+                return Err(ctx.error(
+                    format!("duplicate arg/flag name '{}' on '{}'", arg.name, cmd.name),
+                    cmd.span,
+                ));
+            }
+        }
+        for flag in &cmd.flags {
+            if RESERVED_FLAG_NAMES.contains(&flag.name.as_str()) {
+                return Err(ctx.error(
+                    format!(
+                        "flag name '{}' on '{}' is reserved by the built-in global \
+                         --{} flag",
+                        flag.name, cmd.name, flag.name
+                    ),
+                    cmd.span,
+                ));
+            }
+            if !ids.insert(&flag.name) {
+                return Err(ctx.error(
+                    format!("duplicate arg/flag name '{}' on '{}'", flag.name, cmd.name),
+                    cmd.span,
+                ));
+            }
+            if let Some(short) = flag.short {
+                if RESERVED_FLAG_SHORTS.contains(&short) {
+                    return Err(ctx.error(
+                        format!(
+                            "short flag '-{short}' on '{}' is reserved by a built-in \
+                             global flag",
+                            cmd.name
+                        ),
+                        cmd.span,
+                    ));
+                }
+                if !shorts.insert(short) {
+                    return Err(ctx.error(
+                        format!("duplicate short flag '-{short}' on '{}'", cmd.name),
+                        cmd.span,
+                    ));
+                }
+            }
+        }
+
+        validate_names(&cmd.children, ctx, false)?;
+    }
     Ok(())
 }
 

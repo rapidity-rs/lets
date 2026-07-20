@@ -199,8 +199,8 @@ fn args_and_flags_together() {
         r#"
         deploy {
             arg environment "dev" "staging" "prod"
-            flag dry-run "-d" help="Dry run"
-            run "echo deploy {environment} {?dry-run:--dry-run}"
+            flag preview "-d" help="Preview only"
+            run "echo deploy {environment} {?preview:--preview}"
         }
         "#,
     );
@@ -211,14 +211,14 @@ fn args_and_flags_together() {
             path.to_str().unwrap(),
             "deploy",
             "staging",
-            "--dry-run",
+            "--preview",
         ])
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("deploy staging --dry-run"));
+    assert!(stdout.contains("deploy staging --preview"));
 }
 
 #[test]
@@ -335,8 +335,8 @@ fn args_and_valued_flags_together() {
         deploy {
             arg environment "dev" "staging" "prod"
             flag replicas "-r" type="int" default="3"
-            flag dry-run "-d"
-            run "echo deploy {environment} --replicas {replicas} {?dry-run:--dry-run}"
+            flag preview "-d"
+            run "echo deploy {environment} --replicas {replicas} {?preview:--preview}"
         }
         "#,
     );
@@ -349,12 +349,12 @@ fn args_and_valued_flags_together() {
             "staging",
             "--replicas",
             "5",
-            "--dry-run",
+            "--preview",
         ])
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("deploy staging --replicas 5 --dry-run"));
+    assert!(stdout.contains("deploy staging --replicas 5 --preview"));
 }

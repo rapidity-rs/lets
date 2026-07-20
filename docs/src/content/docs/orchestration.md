@@ -61,12 +61,12 @@ Tokens after the command path are parsed as that command's own arguments and fla
 ```kdl
 build {
     arg mode default="debug"
-    flag jobs "-j" type="int" default="1"
-    run "cargo build --profile {mode} -j {jobs}"
+    flag threads "-t" type="int" default="1"
+    run "cargo build --profile {mode} -j {threads}"
 }
 
 release {
-    deps "build release -j 8"
+    deps "build release -t 8"
     run "gh release create"
 }
 ```

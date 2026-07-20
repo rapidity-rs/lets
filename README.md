@@ -140,13 +140,13 @@ Boolean flags and typed value flags:
 ```kdl
 build {
     flag release "-r" help="Build in release mode"
-    flag jobs "-j" type="int" default="4"
-    run "cargo build {?release:--release} -j {jobs}"
+    flag threads "-t" type="int" default="4"
+    run "cargo build {?release:--release} -j {threads}"
 }
 ```
 
 ```
-$ lets build --release -j 8
+$ lets build --release -t 8
 ```
 
 Interpolation syntax:
@@ -201,7 +201,7 @@ References can pass arguments and flags, validated at load time:
 
 ```kdl
 release {
-    deps "build release -j 8"
+    deps "build release -t 8"
     run "gh release create"
 }
 ```

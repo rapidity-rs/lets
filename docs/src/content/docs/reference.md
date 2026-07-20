@@ -83,6 +83,25 @@ command-name {
 }
 ```
 
+### Strictness
+
+Configs fail loudly at load rather than silently misbehaving:
+
+- **Reserved names.** `self` is reserved at the top level (for `lets self …`).
+  Sibling commands can't share a name or alias. Flags can't reuse the
+  built-in global flags (`--file`, `--yes`, `--dry-run`, `--output`,
+  `--watch`, `--force`, `--jobs`, `--help`) or their shorts
+  (`-f`, `-y`, `-j`, `-h`).
+- **Repeated nodes.** List-like nodes (`run`, `deps`, `steps`, `env`,
+  `vars`, `alias`, `sources`, `generates`, `status`, `precondition`,
+  `defer`, `platform`) extend when repeated. Single-value nodes
+  (`description`, `dir`, `shell`, `before`, `after`, `confirm`, `timeout`,
+  …) error on a repeat instead of silently replacing the first.
+- **Typos.** An unknown child node close to a keyword (`descriptoin`,
+  `envfile`) is an error naming the likely intent. Other unknown nodes
+  become subcommands — `lets self check` prints the parsed tree (hidden
+  commands included) so a swallowed typo is visible.
+
 ## Command child nodes
 
 ### `description`
@@ -175,7 +194,7 @@ Tasks to run in **parallel** before this command.
 ```kdl
 deps "lint" "test"
 deps "db migrate"
-deps "build release -j 8"
+deps "build release -t 8"
 ```
 
 References may include arguments and flags. Trailing tokens are parsed by the target command's own CLI definition, with the same validation as the command line — unknown flags, missing required arguments, or invalid choices fail at config load time.

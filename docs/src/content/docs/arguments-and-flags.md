@@ -234,13 +234,13 @@ A command can have both arguments and flags:
 deploy {
     description "Deploy to an environment"
     arg environment "dev" "staging" "prod"
-    flag force "-f" help="Skip safety checks"
+    flag skip-checks "-s" help="Skip safety checks"
     flag replicas "-r" type="int" default="3"
-    run "deploy.sh {environment} --replicas {replicas} {?force:--force}"
+    run "deploy.sh {environment} --replicas {replicas} {?skip-checks:--force}"
 }
 ```
 
 ```
-$ lets deploy staging -f -r 5
+$ lets deploy staging -s -r 5
 # runs: deploy.sh staging --replicas 5 --force
 ```

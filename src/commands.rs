@@ -13,43 +13,62 @@ pub(crate) fn count_commands(tree: &tree::CommandTree) -> usize {
     count(&tree.commands)
 }
 
-/// Print the command list as a tree with descriptions.
-pub(crate) fn print_command_list(tree: &tree::CommandTree) {
+/// Print the command list as a tree with descriptions. With `show_hidden`,
+/// hidden commands appear too, marked — so `self check` shows exactly what
+/// was parsed, including nodes swallowed as unintended subcommands.
+pub(crate) fn print_command_list(tree: &tree::CommandTree, show_hidden: bool) {
     if let Some(desc) = &tree.description {
         println!("{desc}");
         println!();
     }
 
-    let visible: Vec<_> = tree.commands.iter().filter(|c| !c.hide).collect();
+    let visible: Vec<_> = tree
+        .commands
+        .iter()
+        .filter(|c| show_hidden || !c.hide)
+        .collect();
     let commands = sorted_if(&visible, tree.config.sorted);
     let count = commands.len();
 
     for (i, cmd) in commands.iter().enumerate() {
         let is_last = i == count - 1;
-        print_tree_node(cmd, "", is_last, tree.config.sorted);
+        print_tree_node(cmd, "", is_last, tree.config.sorted, show_hidden);
     }
 }
 
-fn print_tree_node(node: &tree::CommandNode, prefix: &str, is_last: bool, sorted: bool) {
+fn print_tree_node(
+    node: &tree::CommandNode,
+    prefix: &str,
+    is_last: bool,
+    sorted: bool,
+    show_hidden: bool,
+) {
     let connector = if is_last { "└── " } else { "├── " };
-    let desc = node
+    let mut suffix = node
         .description
         .as_deref()
         .map(|d| format!(" \x1b[2m{d}\x1b[0m"))
         .unwrap_or_default();
+    if node.hide {
+        suffix.push_str(" \x1b[2m(hidden)\x1b[0m");
+    }
     println!(
-        "\x1b[2m{prefix}{connector}\x1b[0m\x1b[1;36m{}\x1b[0m{desc}",
+        "\x1b[2m{prefix}{connector}\x1b[0m\x1b[1;36m{}\x1b[0m{suffix}",
         node.name
     );
 
-    let children: Vec<_> = node.children.iter().filter(|c| !c.hide).collect();
+    let children: Vec<_> = node
+        .children
+        .iter()
+        .filter(|c| show_hidden || !c.hide)
+        .collect();
     let children = sorted_if(&children, sorted);
     let child_prefix = format!("{}{}", prefix, if is_last { "    " } else { "│   " });
     let child_count = children.len();
 
     for (i, child) in children.iter().enumerate() {
         let child_is_last = i == child_count - 1;
-        print_tree_node(child, &child_prefix, child_is_last, sorted);
+        print_tree_node(child, &child_prefix, child_is_last, sorted, show_hidden);
     }
 }
 
