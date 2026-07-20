@@ -119,10 +119,13 @@ pub(super) fn parse_config(node: &KdlNode) -> Result<Config> {
                 "env-file" => {
                     config.env_file = first_string_arg(child).map(std::path::PathBuf::from);
                 }
+                "echo" => {
+                    config.echo = first_bool_arg(child).unwrap_or(true);
+                }
                 other => {
                     return Err(Error::Other(format!(
                         "unknown config option '{other}' (expected sorted, shell, output, \
-                         jobs, env, or env-file)"
+                         jobs, env, env-file, or echo)"
                     )));
                 }
             }

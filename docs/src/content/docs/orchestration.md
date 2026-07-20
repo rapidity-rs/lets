@@ -19,7 +19,7 @@ release {
 }
 ```
 
-When you run `lets release`, both `lint` and `test` start simultaneously. Once all deps finish, `release` runs. If any dep fails, the main command never executes.
+When you run `lets release`, both `lint` and `test` start simultaneously. Once all deps finish, `release` runs. If any dep fails, the main command never executes. Parallel deps always run to completion — when several fail, every failure is reported, not just the first.
 
 ### Run-once semantics
 
@@ -88,7 +88,7 @@ ci {
 }
 ```
 
-Steps execute in order: `lint`, then `test`, then `build`. If any step fails, execution stops.
+Steps execute in order: `lint`, then `test`, then `build`. If any step fails, execution stops — unless you pass `--keep-going`, which runs the remaining steps and reports every failure at the end (dependent tasks whose prerequisites failed are still skipped).
 
 ### Steps vs deps
 
@@ -261,6 +261,14 @@ lets --output group ci
 ```
 
 `silent` on a task means its output is buffered and shown only on failure (labeled when the task runs as a dep). The root command itself — the one you invoked — is never prefixed or grouped, since it may be interactive.
+
+Two flags help with long multi-task runs:
+
+- `--summary` prints a per-task status and timing table after the run —
+  successes, failures, and up-to-date skips, plus total wall time.
+- `--verbose` (or `config { echo }`) prints each command as a dimmed `$ cmd`
+  line before it runs, routed through the task's sink so grouped and
+  prefixed output stay attributed correctly.
 
 ## Full execution order
 

@@ -477,8 +477,11 @@ build "cargo build" description="Build the project"
 | `lets --help` | Show help with all commands |
 | `lets --list` | Show all commands in a tree |
 | `lets --dry-run <cmd>` | Show what would run |
+| `lets --verbose <cmd>` | Echo each command before it runs |
+| `lets --keep-going <cmd>` | Keep running independent tasks after a failure, report all failures |
+| `lets --summary <cmd>` | Per-task status and timing table after the run |
 | `lets self init` | Generate a starter lets.kdl |
-| `lets self check` | Validate your lets.kdl |
+| `lets self check` | Validate your lets.kdl and print the parsed tree |
 | `lets self completions <shell>` | Generate shell completions |
 
 ## KDL syntax primer

@@ -123,6 +123,11 @@ fn run() -> error::Result<()> {
         tree.config.jobs = Some(*jobs as usize);
     }
 
+    // --verbose forces command echo on.
+    if matches.get_flag("verbose") {
+        tree.config.echo = true;
+    }
+
     // Built-in flags.
     if matches.get_flag("list") {
         if !config_found {

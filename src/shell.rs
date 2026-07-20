@@ -10,6 +10,7 @@
 //! its own process group via `setpgid`, and timeouts kill the entire group
 //! via `killpg`.
 
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -28,6 +29,8 @@ pub(crate) struct ExecContext {
     pub dir: PathBuf,
     pub shell: Option<String>,
     pub dry_run: bool,
+    /// Echo each command line into the sink before spawning it.
+    pub echo: bool,
     pub timeout: Option<Duration>,
     pub retry_count: u32,
     pub retry_delay: Option<Duration>,
@@ -85,6 +88,7 @@ impl ExecContext {
             dir,
             shell: node.exec.shell.clone().or_else(|| config.shell.clone()),
             dry_run,
+            echo: config.echo,
             timeout: node.exec.timeout,
             retry_count: node.exec.retry_count.unwrap_or(0),
             retry_delay: node.exec.retry_delay,
@@ -185,6 +189,15 @@ pub(crate) fn exec_shell(command: &str, ctx: &ExecContext, sink: &TaskSink) -> R
     if ctx.dry_run {
         println!("[dry-run] {command}");
         return Ok(());
+    }
+
+    if ctx.echo {
+        // Dim when a human is watching; plain in pipes and CI logs.
+        if std::io::stdout().is_terminal() {
+            sink.emit(&format!("\x1b[2m$ {command}\x1b[0m"));
+        } else {
+            sink.emit(&format!("$ {command}"));
+        }
     }
 
     let attempts = ctx.retry_count.max(1);

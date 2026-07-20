@@ -35,13 +35,14 @@ config {
 | `jobs` | integer ≥ 1 | Maximum number of tasks executing concurrently (default: unlimited; `--jobs` overrides) |
 | `env` | properties | Environment variables applied to every task (task `env` overrides) |
 | `env-file` | string | Project-wide .env file, relative to the config directory (task values override) |
+| `echo` | — | Print each command (dimmed `$ cmd` line) before it runs; `--verbose` forces it on |
 
 Unknown config options are load errors.
 
 Output modes:
 
 - `"interleaved"` (default) — child tasks share the terminal directly.
-- `"group"` — each task's merged stdout+stderr is buffered and printed as one `[label]` block when it finishes. Failed tasks still flush their output.
+- `"group"` — each task's merged stdout+stderr is buffered and printed as one `[label]` block when it finishes. Failed tasks still flush their output. On GitHub Actions (`GITHUB_ACTIONS=true`), blocks are wrapped in `::group::`/`::endgroup::` fold markers.
 - `"prefixed"` — lines stream live, each tagged `[label]` with a per-task color.
 
 The global `--output <mode>` flag overrides the config value. The root command itself is never prefixed or grouped, since it may be interactive.

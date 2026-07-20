@@ -137,6 +137,24 @@ pub fn build_cli(tree: &CommandTree) -> Command {
                 .help("List all available commands")
                 .action(clap::ArgAction::SetTrue),
         )
+        .arg(
+            clap::Arg::new("verbose")
+                .long("verbose")
+                .help("Echo each command before it runs")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            clap::Arg::new("keep-going")
+                .long("keep-going")
+                .help("Continue independent tasks after a failure and report all failures")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            clap::Arg::new("summary")
+                .long("summary")
+                .help("Print a per-task status and timing table after the run")
+                .action(clap::ArgAction::SetTrue),
+        )
         .subcommand(build_self_command())
         .subcommand_required(false)
         .disable_help_subcommand(true);

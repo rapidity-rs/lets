@@ -62,6 +62,8 @@ pub enum TaskSink {
     /// (implements `silent`).
     Buffer {
         header: Option<String>,
+        /// Plain (uncolored) task label, for CI fold markers.
+        label: Option<String>,
         only_on_failure: bool,
         buf: Mutex<Vec<u8>>,
     },
@@ -74,6 +76,7 @@ impl TaskSink {
         if silent {
             return TaskSink::Buffer {
                 header: Some(format!("[{}]", colorize(label, color_seq))),
+                label: Some(label.to_string()),
                 only_on_failure: true,
                 buf: Mutex::new(Vec::new()),
             };
@@ -82,6 +85,7 @@ impl TaskSink {
             OutputMode::Interleaved => TaskSink::Inherit,
             OutputMode::Group => TaskSink::Buffer {
                 header: Some(format!("[{}]", colorize(label, color_seq))),
+                label: Some(label.to_string()),
                 only_on_failure: false,
                 buf: Mutex::new(Vec::new()),
             },
@@ -97,11 +101,31 @@ impl TaskSink {
         if silent {
             TaskSink::Buffer {
                 header: None,
+                label: None,
                 only_on_failure: true,
                 buf: Mutex::new(Vec::new()),
             }
         } else {
             TaskSink::Inherit
+        }
+    }
+
+    /// Write one lets-generated line (e.g. a command echo) through the sink,
+    /// so it lands inside the task's block or prefix like process output.
+    pub fn emit(&self, line: &str) {
+        match self {
+            TaskSink::Inherit => println!("{line}"),
+            TaskSink::Prefix { prefix } => {
+                let mut out = std::io::stdout().lock();
+                let _ = out.write_all(prefix.as_bytes());
+                let _ = out.write_all(line.as_bytes());
+                let _ = out.write_all(b"\n");
+            }
+            TaskSink::Buffer { buf, .. } => {
+                let mut buf = buf.lock();
+                buf.extend_from_slice(line.as_bytes());
+                buf.push(b'\n');
+            }
         }
     }
 
@@ -148,6 +172,7 @@ impl TaskSink {
     pub fn finish(&self, failed: bool) {
         if let TaskSink::Buffer {
             header,
+            label,
             only_on_failure,
             buf,
         } = self
@@ -156,8 +181,16 @@ impl TaskSink {
             if buf.is_empty() || (*only_on_failure && !failed) {
                 return;
             }
+            // Fold labeled blocks on GitHub Actions so long task output
+            // collapses in the log view.
+            let fold = label
+                .as_deref()
+                .filter(|_| std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true"));
             // One locked write so the block stays contiguous across threads.
             let mut out = std::io::stdout().lock();
+            if let Some(label) = fold {
+                let _ = writeln!(out, "::group::{label}");
+            }
             if let Some(header) = header {
                 let _ = out.write_all(header.as_bytes());
                 let _ = out.write_all(b"\n");
@@ -165,6 +198,9 @@ impl TaskSink {
             let _ = out.write_all(&buf);
             if !buf.ends_with(b"\n") {
                 let _ = out.write_all(b"\n");
+            }
+            if fold.is_some() {
+                let _ = writeln!(out, "::endgroup::");
             }
         }
     }

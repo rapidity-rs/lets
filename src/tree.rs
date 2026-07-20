@@ -117,6 +117,8 @@ pub struct Config {
     /// Project-wide .env file loaded before task env (relative to the
     /// config directory).
     pub env_file: Option<PathBuf>,
+    /// Echo each command line (dimmed) before it runs; `--verbose` forces it.
+    pub echo: bool,
 }
 
 /// Configuration for what command to run and on which platforms.

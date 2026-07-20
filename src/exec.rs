@@ -12,6 +12,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use clap::ArgMatches;
 use parking_lot::{Condvar, Mutex};
@@ -34,6 +35,8 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, project_root: &Path) -> Res
     let yes = matches.get_flag("yes");
     let dry_run = matches.get_flag("dry-run");
     let force = matches.get_flag("force");
+    let keep_going = matches.get_flag("keep-going");
+    let summary = matches.get_flag("summary");
     let mut ctx = ExecContext::from_node(node, &tree.config, project_root, dry_run)?;
     ctx.env.extend(export_env(node, Some(node_matches)));
 
@@ -50,8 +53,10 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, project_root: &Path) -> Res
         color_seq: AtomicUsize::new(0),
         dry_run,
         force,
+        keep_going,
         project_root: project_root.to_path_buf(),
         permits: Semaphore::new(tree.config.jobs),
+        summary: Mutex::new(Vec::new()),
     };
     let mut visited = HashSet::new();
     orch.collect_interaction(node, &root_key, yes, &mut visited)?;
@@ -74,38 +79,56 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, project_root: &Path) -> Res
     }
     .render_task()?;
 
-    // 1. Preconditions gate the whole task, before any work starts.
-    check_preconditions(&rendered.preconditions, &node.name, &ctx, dry_run)?;
+    let root_label = root_key.join(" ");
+    let total_start = Instant::now();
+    let result = (|| -> Result<()> {
+        // 1. Preconditions gate the whole task, before any work starts.
+        check_preconditions(&rendered.preconditions, &node.name, &ctx, dry_run)?;
 
-    // 2. Parallel deps (run-once).
-    orch.run_deps(node)?;
+        // 2. Parallel deps (run-once).
+        orch.run_deps(node)?;
 
-    // 3. Sequential steps (run-once).
-    orch.run_steps(node)?;
+        // 3. Sequential steps (run-once).
+        orch.run_steps(node)?;
 
-    // 4. Status checks: deps may have satisfied them, so they run after.
-    if is_up_to_date(&rendered.status, &ctx, dry_run, force)? {
-        report_up_to_date(&root_key.join(" "));
-        return Ok(());
+        // 4. Status checks: deps may have satisfied them, so they run after.
+        if is_up_to_date(&rendered.status, &ctx, dry_run, force)? {
+            report_up_to_date(&root_label);
+            orch.record(&root_label, Outcome::UpToDate, Duration::ZERO);
+            return Ok(());
+        }
+
+        // 5. Sources fingerprint: skip when inputs are unchanged since the
+        // last successful run.
+        let freshness = check_freshness(project_root, &root_key, node, dry_run, force)?;
+        if matches!(freshness, fingerprint::Freshness::Current) {
+            report_up_to_date(&root_label);
+            orch.record(&root_label, Outcome::UpToDate, Duration::ZERO);
+            return Ok(());
+        }
+
+        // 6. Hooks and main commands. The root command is never prefixed or
+        // grouped (it may be interactive); silent still buffers until failure.
+        let body_start = Instant::now();
+        let sink = TaskSink::for_root(node.exec.silent);
+        let result = exec_task_commands(&rendered, &ctx, &sink);
+        // Cleanup runs whenever the task reached its body — success, failure,
+        // or interrupt.
+        run_defers(&rendered.defers, &ctx, &sink);
+        sink.finish(result.is_err());
+        record_freshness(project_root, &root_key, freshness, result.is_ok());
+        let outcome = if result.is_ok() {
+            Outcome::Success
+        } else {
+            Outcome::Failed
+        };
+        orch.record(&root_label, outcome, body_start.elapsed());
+        result
+    })();
+
+    if summary {
+        orch.print_summary(total_start.elapsed());
     }
-
-    // 5. Sources fingerprint: skip when inputs are unchanged since the
-    // last successful run.
-    let freshness = check_freshness(project_root, &root_key, node, dry_run, force)?;
-    if matches!(freshness, fingerprint::Freshness::Current) {
-        report_up_to_date(&root_key.join(" "));
-        return Ok(());
-    }
-
-    // 6. Hooks and main commands. The root command is never prefixed or
-    // grouped (it may be interactive); silent still buffers until failure.
-    let sink = TaskSink::for_root(node.exec.silent);
-    let result = exec_task_commands(&rendered, &ctx, &sink);
-    // Cleanup runs whenever the task reached its body — success, failure,
-    // or interrupt.
-    run_defers(&rendered.defers, &ctx, &sink);
-    sink.finish(result.is_err());
-    record_freshness(project_root, &root_key, freshness, result.is_ok());
     result
 }
 
@@ -292,11 +315,62 @@ struct Orchestrator<'a> {
     dry_run: bool,
     /// Ignore status checks (--force): tasks run even when up to date.
     force: bool,
+    /// Continue past step failures and report them all (--keep-going).
+    keep_going: bool,
     /// Directory containing the config file; sources/generates and the
     /// fingerprint cache are relative to it.
     project_root: PathBuf,
     /// Caps concurrently executing task bodies (config jobs / --jobs).
     permits: Semaphore,
+    /// Rows for the --summary table, in completion order.
+    summary: Mutex<Vec<SummaryRow>>,
+}
+
+/// How a task settled, for the --summary table.
+#[derive(Clone, Copy)]
+enum Outcome {
+    Success,
+    Failed,
+    UpToDate,
+}
+
+/// One row of the --summary table.
+struct SummaryRow {
+    label: String,
+    outcome: Outcome,
+    duration: Duration,
+}
+
+fn format_duration(d: Duration) -> String {
+    let secs = d.as_secs_f64();
+    if secs >= 60.0 {
+        format!("{}m{:02}s", d.as_secs() / 60, d.as_secs() % 60)
+    } else if secs >= 1.0 {
+        format!("{secs:.1}s")
+    } else {
+        format!("{}ms", d.as_millis())
+    }
+}
+
+/// Collapse per-task results: everything passed → Ok, a single failure
+/// passes through unchanged, several failures aggregate into one report.
+fn settle(results: Vec<(String, Result<()>)>) -> Result<()> {
+    let mut failures: Vec<(String, Error)> = results
+        .into_iter()
+        .filter_map(|(label, r)| r.err().map(|e| (label, e)))
+        .collect();
+    match failures.len() {
+        0 => Ok(()),
+        1 => Err(failures.remove(0).1),
+        n => Err(Error::Other(format!(
+            "{n} tasks failed:\n{}",
+            failures
+                .iter()
+                .map(|(label, e)| format!("  {label}: {e}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ))),
+    }
 }
 
 /// Minimal counting semaphore. Permits wrap only a task's command phase —
@@ -420,50 +494,93 @@ impl Orchestrator<'_> {
         }
     }
 
-    /// Run all deps in parallel using scoped threads. Fails on first error.
+    /// Run all deps in parallel using scoped threads. Every dep runs to
+    /// completion; a single failure passes through unchanged, several
+    /// aggregate into one report.
     fn run_deps(&self, node: &CommandNode) -> Result<()> {
         if node.orch.deps.is_empty() {
             return Ok(());
         }
 
-        std::thread::scope(|s| {
+        let results: Vec<(String, Result<()>)> = std::thread::scope(|s| {
             let handles: Vec<_> = node
                 .orch
                 .deps
                 .iter()
                 .map(|task_ref| {
-                    s.spawn(|| {
+                    let handle = s.spawn(|| {
                         let (dep_node, args) =
                             self.tree.resolve_ref(task_ref).ok_or_else(|| {
                                 Error::Other(format!("dep '{}' not found", task_ref.display()))
                             })?;
                         let key = canonical_key(dep_node, &task_ref.tokens, args);
                         self.run_task(&key, dep_node, args)
-                    })
+                    });
+                    (task_ref.display(), handle)
                 })
                 .collect();
 
-            for handle in handles {
-                handle
-                    .join()
-                    .map_err(|_| Error::Other("dependency thread panicked".to_string()))??;
-            }
+            handles
+                .into_iter()
+                .map(|(label, handle)| {
+                    let result = handle.join().unwrap_or_else(|_| {
+                        Err(Error::Other("dependency thread panicked".to_string()))
+                    });
+                    (label, result)
+                })
+                .collect()
+        });
 
-            Ok(())
-        })
+        settle(results)
     }
 
-    /// Run all steps sequentially. Fails on first error.
+    /// Run all steps sequentially. Fails on the first error unless
+    /// --keep-going, which runs the remaining steps and reports every
+    /// failure at once.
     fn run_steps(&self, node: &CommandNode) -> Result<()> {
+        let mut results = Vec::new();
         for task_ref in &node.orch.steps {
             let (step_node, args) = self
                 .tree
                 .resolve_ref(task_ref)
                 .ok_or_else(|| Error::Other(format!("step '{}' not found", task_ref.display())))?;
             let key = canonical_key(step_node, &task_ref.tokens, args);
-            self.run_task(&key, step_node, args)?;
+            let result = self.run_task(&key, step_node, args);
+            let failed = result.is_err();
+            results.push((task_ref.display(), result));
+            if failed && !self.keep_going {
+                break;
+            }
         }
-        Ok(())
+        settle(results)
+    }
+
+    /// Append one row to the --summary table.
+    fn record(&self, label: &str, outcome: Outcome, duration: Duration) {
+        self.summary.lock().push(SummaryRow {
+            label: label.to_string(),
+            outcome,
+            duration,
+        });
+    }
+
+    /// Print the per-task status and timing table (--summary) to stderr.
+    fn print_summary(&self, total: Duration) {
+        let rows = self.summary.lock();
+        if rows.is_empty() {
+            return;
+        }
+        let width = rows.iter().map(|r| r.label.len()).max().unwrap_or(0);
+        eprintln!();
+        for row in rows.iter() {
+            let (mark, note) = match row.outcome {
+                Outcome::Success => ("\x1b[32m✓\x1b[0m", format_duration(row.duration)),
+                Outcome::Failed => ("\x1b[31m✗\x1b[0m", format_duration(row.duration)),
+                Outcome::UpToDate => ("\x1b[2m-\x1b[0m", "up to date".to_string()),
+            };
+            eprintln!("  {mark} {label:<width$}  {note}", label = row.label);
+        }
+        eprintln!("  total: {}", format_duration(total));
     }
 
     /// Execute a command node invoked via deps/steps.
@@ -513,22 +630,25 @@ impl Orchestrator<'_> {
         self.run_steps(node)?;
 
         // Status checks may have been satisfied by deps, so they run after.
+        let label = key.join(" ");
         if is_up_to_date(&rendered.status, &ctx, self.dry_run, self.force)? {
-            report_up_to_date(&key.join(" "));
+            report_up_to_date(&label);
+            self.record(&label, Outcome::UpToDate, Duration::ZERO);
             return Ok(());
         }
 
         // Sources fingerprint: skip when inputs are unchanged.
         let freshness = check_freshness(&self.project_root, key, node, self.dry_run, self.force)?;
         if matches!(freshness, fingerprint::Freshness::Current) {
-            report_up_to_date(&key.join(" "));
+            report_up_to_date(&label);
+            self.record(&label, Outcome::UpToDate, Duration::ZERO);
             return Ok(());
         }
 
         // This task's own output (hooks + run commands) goes through one sink
         // so grouped mode flushes it as a single block. The permit caps how
         // many task bodies execute at once.
-        let label = key.join(" ");
+        let body_start = Instant::now();
         let color_seq = self.color_seq.fetch_add(1, Ordering::Relaxed);
         let sink = TaskSink::for_task(self.mode, &label, node.exec.silent, color_seq);
         let permit = self.permits.acquire();
@@ -539,6 +659,12 @@ impl Orchestrator<'_> {
         run_defers(&rendered.defers, &ctx, &sink);
         sink.finish(result.is_err());
         record_freshness(&self.project_root, key, freshness, result.is_ok());
+        let outcome = if result.is_ok() {
+            Outcome::Success
+        } else {
+            Outcome::Failed
+        };
+        self.record(&label, outcome, body_start.elapsed());
         result
     }
 }
