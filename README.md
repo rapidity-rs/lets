@@ -162,15 +162,18 @@ process as `LETS_ARG_<NAME>` / `LETS_FLAG_<NAME>` env vars.
 
 ### Variables
 
-Define values once, use them anywhere — globally or scoped to a command:
+Define values once, use them anywhere — globally or scoped to a command.
+`cmd=` makes a var dynamic: its shell command runs lazily on first
+reference, once per invocation:
 
 ```kdl
 vars {
     registry "ghcr.io/acme"
     image "{registry}/app"
+    sha cmd="git rev-parse --short HEAD"
 }
 
-push "docker push {image}:latest"
+push "docker push {image}:{sha}"
 ```
 
 Args and flags shadow vars of the same name; command vars override globals.

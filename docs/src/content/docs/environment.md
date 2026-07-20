@@ -34,16 +34,51 @@ the environment with `{$VAR}`. A var value that references an unknown name
 fails when the config loads. Unlike `env`, vars are pure config-level
 text substitution — they never touch the child process environment.
 
-## Environment variables
+### Dynamic vars (`cmd=`)
 
-Set environment variables for a command:
+A var declared with `cmd="…"` runs a shell command instead of holding static
+text — the moral equivalent of `` x := `cmd` `` in just or `sh:` vars in
+Taskfile:
 
 ```kdl
+vars {
+    sha cmd="git rev-parse --short HEAD"
+    branch cmd="git branch --show-current"
+}
+
+tag "docker tag app registry/app:{sha}"
+release "gh release create v-{sha} --target {branch}"
+```
+
+Dynamic vars are **lazy and cached**: the command runs with the config shell
+in the project root the first time the var is referenced during an
+invocation, and the trimmed stdout is reused everywhere else — even across
+parallel tasks. A var no task references never runs. If the command fails,
+the run aborts with an error naming the var.
+
+Because their values only exist at run time, static var values can't
+reference dynamic vars — reference `{sha}` directly where you need it. The
+`cmd=` string itself may reference static vars and `{$VAR}`.
+
+## Environment variables
+
+Set environment variables for a command, or for every task at once under
+`config`:
+
+```kdl
+config {
+    env CI_PROJECT="acme"          // visible to every task
+    env-file ".env.shared"         // project-wide env file
+}
+
 serve {
     env PORT="3000" RUST_LOG="debug"
     run "cargo run --bin server"
 }
 ```
+
+Precedence, later winning: config `env-file`, config `env`, task `env-file`,
+task `env`.
 
 Variables are set in the child process environment — they don't affect your
 shell. Values may reference config vars (`{name}`) and the environment

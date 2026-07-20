@@ -267,3 +267,101 @@ PLAIN=simple
         "plain values not handled: {stdout}"
     );
 }
+
+#[test]
+fn config_env_applies_to_every_task() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        config {
+            env GREETING="hello" SCOPE="global"
+        }
+        show "echo $GREETING $SCOPE"
+        "#,
+    );
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "show"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("hello global"));
+}
+
+#[test]
+fn task_env_overrides_config_env() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        config {
+            env SCOPE="global"
+        }
+        show {
+            env SCOPE="task"
+            run "echo scope=$SCOPE"
+        }
+        "#,
+    );
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "show"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("scope=task"));
+}
+
+#[test]
+fn config_env_file_loads_for_every_task() {
+    let (dir, path) = with_temp_kdl(
+        r#"
+        config {
+            env-file ".env.shared"
+            env OVERRIDE="from-config"
+        }
+        show "echo $SHARED $OVERRIDE"
+        "#,
+    );
+    std::fs::write(
+        dir.path().join(".env.shared"),
+        "SHARED=file-value\nOVERRIDE=from-file\n",
+    )
+    .unwrap();
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "show"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // env-file loads, and explicit config env overrides it.
+    assert!(
+        stdout.contains("file-value from-config"),
+        "stdout: {stdout}"
+    );
+}
+
+#[test]
+fn unknown_config_option_is_load_error() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        config {
+            shel "zsh"
+        }
+        show "echo hi"
+        "#,
+    );
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "show"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("unknown config option 'shel'"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

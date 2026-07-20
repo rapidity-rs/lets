@@ -21,7 +21,7 @@ use kdl::{KdlDocument, KdlNode};
 use crate::error::{Error, Result};
 use crate::tree::{
     CommandNode, CommandTree, Config, EnvConfig, ExecConfig, Interactive, Orchestration, Platform,
-    RunConfig,
+    RunConfig, VarValue,
 };
 
 use fields::{parse_arg, parse_choose, parse_flag, parse_prompt};
@@ -110,7 +110,7 @@ pub(crate) fn parse_source(source: &str, path: &Path) -> Result<CommandTree> {
                 }
             }
             "vars" => {
-                tree.vars.extend(parse_vars_block(node));
+                tree.vars.extend(parse_vars_block(node)?);
             }
             "cmd" => {
                 tree.commands.push(parse_explicit_command(node)?);
@@ -126,29 +126,47 @@ pub(crate) fn parse_source(source: &str, path: &Path) -> Result<CommandTree> {
     Ok(tree)
 }
 
-/// Parse a `vars` block: child nodes are `name "value"` pairs.
-fn parse_vars_block(node: &KdlNode) -> Vec<(String, String)> {
-    node.children()
-        .map(|children| {
-            children
-                .nodes()
-                .iter()
-                .filter_map(|child| {
-                    let value = first_string_arg(child)?;
-                    Some((child.name().value().to_string(), value))
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+/// Parse a `vars` block: children are `name "value"` pairs (static) or
+/// `name cmd="shell command"` (dynamic, evaluated lazily at run time).
+fn parse_vars_block(node: &KdlNode) -> Result<Vec<(String, VarValue)>> {
+    let Some(children) = node.children() else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for child in children.nodes() {
+        let name = child.name().value().to_string();
+        let value = first_string_arg(child);
+        let cmd = named_string(child, "cmd");
+        let var = match (value, cmd) {
+            (Some(_), Some(_)) => {
+                return Err(Error::ParseNoSpan {
+                    message: format!(
+                        "var '{name}' has both a value and cmd=; use one or the other"
+                    ),
+                });
+            }
+            (Some(value), None) => VarValue::Static(value),
+            (None, Some(cmd)) => VarValue::command(cmd),
+            (None, None) => {
+                return Err(Error::ParseNoSpan {
+                    message: format!("var '{name}' needs a value (\"…\") or a command (cmd=\"…\")"),
+                });
+            }
+        };
+        out.push((name, var));
+    }
+    Ok(out)
 }
 
 /// Resolve `{name}` references inside var values and merge scopes onto each
 /// node: globals, then each ancestor group's vars, then the node's own —
-/// later entries win at lookup time.
+/// later entries win at lookup time. Dynamic vars have their `cmd` string
+/// rendered here (against the static scope where they were declared), so
+/// run-time evaluation is scope-independent and safely cacheable.
 fn resolve_vars(tree: &mut CommandTree) -> Result<()> {
-    let mut globals: Vec<(String, String)> = Vec::new();
+    let mut globals: Vec<(String, VarValue)> = Vec::new();
     for (name, value) in std::mem::take(&mut tree.vars) {
-        let rendered = render_var(&name, &value, &globals)?;
+        let rendered = render_var(&name, value, &globals)?;
         globals.push((name, rendered));
     }
     for cmd in &mut tree.commands {
@@ -158,10 +176,10 @@ fn resolve_vars(tree: &mut CommandTree) -> Result<()> {
     Ok(())
 }
 
-fn resolve_node_vars(node: &mut CommandNode, inherited: &[(String, String)]) -> Result<()> {
-    let mut merged: Vec<(String, String)> = inherited.to_vec();
+fn resolve_node_vars(node: &mut CommandNode, inherited: &[(String, VarValue)]) -> Result<()> {
+    let mut merged: Vec<(String, VarValue)> = inherited.to_vec();
     for (name, value) in std::mem::take(&mut node.vars) {
-        let rendered = render_var(&name, &value, &merged)?;
+        let rendered = render_var(&name, value, &merged)?;
         merged.push((name, rendered));
     }
     node.vars = merged;
@@ -172,26 +190,39 @@ fn resolve_node_vars(node: &mut CommandNode, inherited: &[(String, String)]) -> 
     Ok(())
 }
 
-/// Var values may reference earlier vars and the environment (`{$VAR}`,
-/// empty when unset). Anything else — forward references, unknown names —
-/// is a load error.
-fn render_var(name: &str, value: &str, scope: &[(String, String)]) -> Result<String> {
+/// Render the static text of a var (or a dynamic var's command string)
+/// against earlier vars and the environment (`{$VAR}`, empty when unset).
+/// Referencing a dynamic var from another var is a load error: the value
+/// would depend on evaluation order.
+fn render_var(name: &str, value: VarValue, scope: &[(String, VarValue)]) -> Result<VarValue> {
     use crate::interpolate::{Placeholder, Resolution};
-    crate::interpolate::render(value, |p| match p {
-        Placeholder::Variable(n) => scope
-            .iter()
-            .rev()
-            .find(|(k, _)| k == n)
-            .map(|(_, v)| v.clone())
-            .map_or(Resolution::Unknown, Resolution::Value),
-        Placeholder::EnvVar(n) => std::env::var(n)
-            .ok()
-            .map_or(Resolution::Skip, Resolution::Value),
-        _ => Resolution::Unknown,
-    })
-    .map_err(|e| Error::ParseNoSpan {
-        message: format!("in var '{name}': {e}"),
-    })
+    let render_text = |text: &str| {
+        crate::interpolate::render(text, |p| match p {
+            Placeholder::Variable(n) => match scope.iter().rev().find(|(k, _)| k == n) {
+                Some((_, VarValue::Static(v))) => Resolution::Value(v.clone()),
+                Some((_, VarValue::Command { .. })) => Resolution::Error(format!(
+                    "var '{name}' references dynamic var '{n}'; dynamic values resolve \
+                     at run time — reference {{{n}}} directly where it's used, or make \
+                     '{name}' dynamic too"
+                )),
+                None => Resolution::Unknown,
+            },
+            Placeholder::EnvVar(n) => std::env::var(n)
+                .ok()
+                .map_or(Resolution::Skip, Resolution::Value),
+            _ => Resolution::Unknown,
+        })
+        .map_err(|e| Error::ParseNoSpan {
+            message: format!("in var '{name}': {e}"),
+        })
+    };
+    match value {
+        VarValue::Static(text) => Ok(VarValue::Static(render_text(&text)?)),
+        VarValue::Command { cmd, cache } => Ok(VarValue::Command {
+            cmd: render_text(&cmd)?,
+            cache,
+        }),
+    }
 }
 
 /// Parse a `cmd` node: `cmd name "inline command"` or `cmd name { ... }`.
@@ -315,7 +346,7 @@ fn parse_command_body(
                     cmd.generates.extend(parse_string_list(child));
                 }
                 "vars" => {
-                    cmd.vars.extend(parse_vars_block(child));
+                    cmd.vars.extend(parse_vars_block(child)?);
                 }
                 "run-policy" => {
                     let value = first_string_arg(child).unwrap_or_default();

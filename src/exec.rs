@@ -69,6 +69,8 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, project_root: &Path) -> Res
         matches: Some(node_matches),
         vars: &interactive_vars,
         env: &ctx.env,
+        config_shell: tree.config.shell.as_deref(),
+        root: project_root,
     }
     .render_task()?;
 
@@ -373,7 +375,13 @@ impl Orchestrator<'_> {
             && !self.dry_run
             && !yes
         {
-            let rendered = interpolate_simple(confirm_msg, &vars, node)?;
+            let rendered = interpolate_simple(
+                confirm_msg,
+                &vars,
+                node,
+                self.tree.config.shell.as_deref(),
+                &self.project_root,
+            )?;
             let confirmed = dialoguer::Confirm::new()
                 .with_prompt(&rendered)
                 .default(false)
@@ -492,6 +500,8 @@ impl Orchestrator<'_> {
             matches: matches.as_ref(),
             vars,
             env: &ctx.env,
+            config_shell: self.tree.config.shell.as_deref(),
+            root: &self.project_root,
         }
         .render_task()?;
 
@@ -570,6 +580,9 @@ struct Renderer<'a> {
     vars: &'a HashMap<String, String>,
     /// The task's resolved environment (env-file + env), for `{$VAR}`.
     env: &'a [(String, String)],
+    /// Config shell + project root, for lazy dynamic-var evaluation.
+    config_shell: Option<&'a str>,
+    root: &'a Path,
 }
 
 impl Renderer<'_> {
@@ -696,9 +709,18 @@ impl Renderer<'_> {
                         }
                     }
                 };
-                from_cli
-                    .or_else(|| self.node.lookup_var(name))
-                    .map_or(Resolution::Unknown, Resolution::Value)
+                if let Some(value) = from_cli {
+                    return Resolution::Value(value);
+                }
+                match self.node.lookup_var(name) {
+                    Some(def) => {
+                        match shell::resolve_var(name, def, self.config_shell, self.root) {
+                            Ok(v) => Resolution::Value(v),
+                            Err(msg) => Resolution::Error(msg),
+                        }
+                    }
+                    None => Resolution::Unknown,
+                }
             }
         }
     }
@@ -806,13 +828,22 @@ fn interpolate_simple(
     template: &str,
     vars: &HashMap<String, String>,
     node: &CommandNode,
+    config_shell: Option<&str>,
+    root: &Path,
 ) -> Result<String> {
     interpolate::render(template, |p| match p {
-        Placeholder::Variable(name) => vars
-            .get(name)
-            .cloned()
-            .or_else(|| node.lookup_var(name))
-            .map_or(Resolution::Unknown, Resolution::Value),
+        Placeholder::Variable(name) => {
+            if let Some(value) = vars.get(name) {
+                return Resolution::Value(value.clone());
+            }
+            match node.lookup_var(name) {
+                Some(def) => match shell::resolve_var(name, def, config_shell, root) {
+                    Ok(v) => Resolution::Value(v),
+                    Err(msg) => Resolution::Error(msg),
+                },
+                None => Resolution::Unknown,
+            }
+        }
         Placeholder::EnvVar(name) => {
             std::env::var(name).map_or(Resolution::Skip, Resolution::Value)
         }

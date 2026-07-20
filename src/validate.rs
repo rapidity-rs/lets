@@ -18,10 +18,29 @@ use crate::tree::{CommandNode, CommandTree};
 pub fn validate(tree: &CommandTree, ctx: &SourceCtx) -> Result<()> {
     validate_names(&tree.commands, ctx, true)?;
     validate_inputs(&tree.commands, ctx)?;
+    validate_config_env(tree)?;
     validate_refs(tree, &tree.commands, ctx)?;
     validate_no_cycles(tree, &tree.commands)?;
     validate_sources(&tree.commands, ctx)?;
     validate_placeholders(&tree.commands, ctx)?;
+    Ok(())
+}
+
+/// Config-level env values may reference global vars and `{$VAR}` only.
+fn validate_config_env(tree: &CommandTree) -> Result<()> {
+    for (key, value) in &tree.config.env {
+        interpolate::render(value, |p| match p {
+            Placeholder::EnvVar(_) => Resolution::Skip,
+            Placeholder::Variable(name) if tree.vars.iter().any(|(k, _)| k == name) => {
+                Resolution::Skip
+            }
+            _ => Resolution::Unknown,
+        })
+        .map(drop)
+        .map_err(|e| Error::ParseNoSpan {
+            message: format!("in config env value '{key}': {e}"),
+        })?;
+    }
     Ok(())
 }
 

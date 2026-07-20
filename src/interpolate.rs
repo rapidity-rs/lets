@@ -32,6 +32,9 @@ pub enum Resolution {
     Skip,
     /// The placeholder cannot be resolved in this context; rendering fails.
     Unknown,
+    /// Resolution was attempted and failed (e.g. a dynamic var's command
+    /// exited non-zero); rendering fails with this message.
+    Error(String),
 }
 
 /// Why rendering a template failed.
@@ -41,6 +44,8 @@ pub enum RenderError {
     Unknown { placeholder: String },
     /// A `{` without a matching `}`.
     Unterminated,
+    /// A resolver failed with its own message.
+    Failed { message: String },
 }
 
 impl fmt::Display for RenderError {
@@ -56,6 +61,7 @@ impl fmt::Display for RenderError {
                 "unterminated '{{' placeholder \
                  (write '{{{{' and '}}}}' for literal braces)"
             ),
+            RenderError::Failed { message } => f.write_str(message),
         }
     }
 }
@@ -116,6 +122,7 @@ pub fn render(
                     Resolution::Value(value) => result.push_str(&value),
                     Resolution::Skip => {}
                     Resolution::Unknown => return Err(RenderError::Unknown { placeholder }),
+                    Resolution::Error(message) => return Err(RenderError::Failed { message }),
                 }
             }
             _ => result.push(ch),

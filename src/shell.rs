@@ -18,7 +18,7 @@ use std::time::Duration;
 use crate::error::{Error, Result};
 use crate::interpolate::{self, Placeholder, Resolution};
 use crate::output::TaskSink;
-use crate::tree::{CommandNode, Config};
+use crate::tree::{CommandNode, Config, VarValue};
 
 /// Execution context derived from a CommandNode's settings.
 pub(crate) struct ExecContext {
@@ -60,47 +60,22 @@ impl ExecContext {
                 invocation_dir.display().to_string(),
             ));
         }
-
-        // Load env-file next (explicit env vars override). The path is
-        // relative to the config directory, like every other config path.
-        if let Some(env_file) = &node.env.file {
-            let env_path = project_root.join(env_file);
-            let iter = dotenvy::from_path_iter(&env_path).map_err(|e| {
-                Error::Other(format!(
-                    "failed to read env-file '{}': {e}",
-                    env_path.display()
-                ))
-            })?;
-            for item in iter {
-                let (key, value) = item.map_err(|e| {
-                    Error::Other(format!(
-                        "failed to parse env-file '{}': {e}",
-                        env_path.display()
-                    ))
-                })?;
-                env.push((key, value));
-            }
+        // Env layers, later overriding earlier: config env-file, config
+        // env, task env-file, task env. All file paths resolve against the
+        // config directory, like every other config path.
+        if let Some(env_file) = &config.env_file {
+            load_env_file(&project_root.join(env_file), &mut env)?;
         }
-
-        // Explicit env vars override env-file. Values interpolate config vars
-        // and `{$VAR}` lookups against env declared so far (env-file entries,
-        // earlier `env` keys), falling back to the process environment.
+        for (k, v) in &config.env {
+            let rendered = render_env_value(k, v, node, config, project_root, &env)?;
+            env.retain(|(ek, _)| ek != k);
+            env.push((k.clone(), rendered));
+        }
+        if let Some(env_file) = &node.env.file {
+            load_env_file(&project_root.join(env_file), &mut env)?;
+        }
         for (k, v) in &node.env.vars {
-            let rendered = interpolate::render(v, |p| match p {
-                Placeholder::Variable(name) => match node.lookup_var(name) {
-                    Some(value) => Resolution::Value(value),
-                    None => Resolution::Unknown,
-                },
-                Placeholder::EnvVar(name) => env
-                    .iter()
-                    .rev()
-                    .find(|(ek, _)| ek == name)
-                    .map(|(_, ev)| ev.clone())
-                    .or_else(|| std::env::var(name).ok())
-                    .map_or(Resolution::Skip, Resolution::Value),
-                _ => Resolution::Unknown,
-            })
-            .map_err(|e| Error::Other(format!("in env value '{k}' of '{}': {e}", node.name)))?;
+            let rendered = render_env_value(k, v, node, config, project_root, &env)?;
             env.retain(|(ek, _)| ek != k);
             env.push((k.clone(), rendered));
         }
@@ -114,6 +89,95 @@ impl ExecContext {
             retry_count: node.exec.retry_count.unwrap_or(0),
             retry_delay: node.exec.retry_delay,
         })
+    }
+}
+
+/// Append a .env file's entries to `env`.
+fn load_env_file(path: &Path, env: &mut Vec<(String, String)>) -> Result<()> {
+    let iter = dotenvy::from_path_iter(path)
+        .map_err(|e| Error::Other(format!("failed to read env-file '{}': {e}", path.display())))?;
+    for item in iter {
+        let (key, value) = item.map_err(|e| {
+            Error::Other(format!(
+                "failed to parse env-file '{}': {e}",
+                path.display()
+            ))
+        })?;
+        env.push((key, value));
+    }
+    Ok(())
+}
+
+/// Render one env value: config vars (static or dynamic) and `{$VAR}`
+/// lookups against env declared so far, falling back to the process
+/// environment.
+fn render_env_value(
+    key: &str,
+    value: &str,
+    node: &CommandNode,
+    config: &Config,
+    project_root: &Path,
+    env: &[(String, String)],
+) -> Result<String> {
+    interpolate::render(value, |p| match p {
+        Placeholder::Variable(name) => match node.lookup_var(name) {
+            Some(def) => match resolve_var(name, def, config.shell.as_deref(), project_root) {
+                Ok(v) => Resolution::Value(v),
+                Err(msg) => Resolution::Error(msg),
+            },
+            None => Resolution::Unknown,
+        },
+        Placeholder::EnvVar(name) => env
+            .iter()
+            .rev()
+            .find(|(ek, _)| ek == name)
+            .map(|(_, ev)| ev.clone())
+            .or_else(|| std::env::var(name).ok())
+            .map_or(Resolution::Skip, Resolution::Value),
+        _ => Resolution::Unknown,
+    })
+    .map_err(|e| Error::Other(format!("in env value '{key}' of '{}': {e}", node.name)))
+}
+
+/// Resolve a var to its text. Dynamic vars run `shell -c cmd` in the
+/// project root on first reference; the trimmed stdout is cached for the
+/// whole invocation (failures are cached too, so a broken command doesn't
+/// run once per referencing task).
+pub(crate) fn resolve_var(
+    name: &str,
+    value: &VarValue,
+    shell: Option<&str>,
+    root: &Path,
+) -> std::result::Result<String, String> {
+    match value {
+        VarValue::Static(v) => Ok(v.clone()),
+        VarValue::Command { cmd, cache } => cache
+            .get_or_init(|| {
+                let shell = shell.unwrap_or("sh");
+                let output = process::Command::new(shell)
+                    .arg("-c")
+                    .arg(cmd)
+                    .current_dir(root)
+                    .output()
+                    .map_err(|e| format!("var '{name}': failed to run `{cmd}`: {e}"))?;
+                if !output.status.success() {
+                    let code = output
+                        .status
+                        .code()
+                        .map_or_else(|| "signal".to_string(), |c| c.to_string());
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let detail = if stderr.trim().is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {}", stderr.trim())
+                    };
+                    return Err(format!("var '{name}': `{cmd}` exited with {code}{detail}"));
+                }
+                Ok(String::from_utf8_lossy(&output.stdout)
+                    .trim_end()
+                    .to_string())
+            })
+            .clone(),
     }
 }
 

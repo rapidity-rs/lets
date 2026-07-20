@@ -33,6 +33,10 @@ config {
 | `shell` | string | Default shell for all commands |
 | `output` | `"interleaved"`, `"group"`, `"prefixed"` | Output mode for tasks run via `deps`/`steps` (default: `"interleaved"`) |
 | `jobs` | integer ≥ 1 | Maximum number of tasks executing concurrently (default: unlimited; `--jobs` overrides) |
+| `env` | properties | Environment variables applied to every task (task `env` overrides) |
+| `env-file` | string | Project-wide .env file, relative to the config directory (task values override) |
+
+Unknown config options are load errors.
 
 Output modes:
 
@@ -52,17 +56,27 @@ include "tasks/db.kdl"
 
 ### `vars`
 
-Global variables usable in `{name}` interpolation everywhere. Values resolve
-at load time and may reference earlier vars or the environment (`{$VAR}`).
-Also available inside a command or group, scoped to it and its children.
-Declared args/flags and interactive bindings take precedence over vars.
+Global variables usable in `{name}` interpolation everywhere. Static values
+resolve at load time and may reference earlier vars or the environment
+(`{$VAR}`). Also available inside a command or group, scoped to it and its
+children. Declared args/flags and interactive bindings take precedence over
+vars.
 
 ```kdl
 vars {
     registry "ghcr.io/acme"
     image "{registry}/app"
+    sha cmd="git rev-parse --short HEAD"
 }
 ```
+
+A var with `cmd="…"` is **dynamic**: the command runs with the config shell
+in the project root the first time the var is referenced, and its trimmed
+stdout is cached for the rest of the invocation — referenced by ten tasks,
+it still runs once; referenced by none, it never runs. A failing command
+fails the run with an error naming the var. Dynamic values resolve at run
+time, so static vars can't reference them (the `cmd=` string itself may
+reference static vars).
 
 ## Command nodes
 

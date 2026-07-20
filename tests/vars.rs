@@ -289,3 +289,153 @@ fn unknown_var_reference_is_load_error() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("in var 'image'"), "stderr was: {stderr}");
 }
+
+#[test]
+fn dynamic_var_interpolates_command_output() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        vars {
+            greeting cmd="echo hey there"
+        }
+        show "echo got={greeting}"
+        "#,
+    );
+
+    let output = run(&path, &["show"]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "got=hey there"
+    );
+}
+
+#[test]
+fn dynamic_var_is_lazy() {
+    // A task that never references the var must not run its command.
+    let (dir, path) = with_temp_kdl(
+        r#"
+        vars {
+            stamp cmd="touch ran.marker && echo x"
+        }
+        plain "echo no vars here"
+        uses "echo {stamp}"
+        "#,
+    );
+
+    let output = run(&path, &["plain"]);
+    assert!(output.status.success());
+    assert!(
+        !dir.path().join("ran.marker").exists(),
+        "unreferenced dynamic var must not execute"
+    );
+
+    let output = run(&path, &["uses"]);
+    assert!(output.status.success());
+    assert!(dir.path().join("ran.marker").exists());
+}
+
+#[test]
+fn dynamic_var_runs_once_across_parallel_deps() {
+    let (dir, path) = with_temp_kdl(
+        r#"
+        vars {
+            stamp cmd="echo tick >> counter.txt && echo v"
+        }
+        a "echo a={stamp}"
+        b "echo b={stamp}"
+        all {
+            deps "a" "b"
+            run "echo root={stamp}"
+        }
+        "#,
+    );
+
+    let output = run(&path, &["all"]);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let counter = std::fs::read_to_string(dir.path().join("counter.txt")).unwrap();
+    assert_eq!(
+        counter.lines().count(),
+        1,
+        "dynamic var ran more than once: {counter:?}"
+    );
+}
+
+#[test]
+fn dynamic_var_failure_names_the_var() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        vars {
+            sha cmd="echo broken >&2; exit 3"
+        }
+        show "echo {sha}"
+        "#,
+    );
+
+    let output = run(&path, &["show"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("var 'sha'"), "stderr: {stderr}");
+    assert!(stderr.contains("broken"), "stderr: {stderr}");
+}
+
+#[test]
+fn static_var_referencing_dynamic_is_load_error() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        vars {
+            sha cmd="echo abc"
+            image "registry/{sha}"
+        }
+        push "echo {image}"
+        "#,
+    );
+
+    let output = run(&path, &["push"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("references dynamic var 'sha'"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn var_with_value_and_cmd_is_load_error() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        vars {
+            sha "abc" cmd="echo def"
+        }
+        show "echo {sha}"
+        "#,
+    );
+
+    let output = run(&path, &["show"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("both a value and cmd="), "stderr: {stderr}");
+}
+
+#[test]
+fn dynamic_var_cmd_may_reference_static_vars() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        vars {
+            prefix "v1"
+            tag cmd="echo {prefix}-build"
+        }
+        show "echo tag={tag}"
+        "#,
+    );
+
+    let output = run(&path, &["show"]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        "tag=v1-build"
+    );
+}

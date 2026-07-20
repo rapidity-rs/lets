@@ -72,8 +72,34 @@ pub struct CommandTree {
     pub commands: Vec<CommandNode>,
     /// Paths of files pulled in via `include`, recursively (for --watch).
     pub includes: Vec<std::path::PathBuf>,
-    /// Global variables usable in interpolation, resolved at load time.
-    pub vars: Vec<(String, String)>,
+    /// Global variables usable in interpolation. Static values resolve at
+    /// load; dynamic (`cmd=`) values resolve lazily at run time.
+    pub vars: Vec<(String, VarValue)>,
+}
+
+/// A config variable's value: static text resolved at load time, or a shell
+/// command evaluated lazily on first reference. The cache cell is created
+/// once per declaration and shared by every scope the var merges into, so
+/// a dynamic var runs at most once per invocation no matter how many tasks
+/// reference it.
+#[derive(Debug, Clone)]
+pub enum VarValue {
+    Static(String),
+    Command {
+        /// The command, with static-var references already rendered.
+        cmd: String,
+        /// Trimmed stdout on success, error message on failure.
+        cache: std::sync::Arc<std::sync::OnceLock<std::result::Result<String, String>>>,
+    },
+}
+
+impl VarValue {
+    pub fn command(cmd: String) -> Self {
+        VarValue::Command {
+            cmd,
+            cache: std::sync::Arc::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -86,6 +112,11 @@ pub struct Config {
     pub output: crate::output::OutputMode,
     /// Maximum number of task bodies executing concurrently (None = unlimited).
     pub jobs: Option<usize>,
+    /// Environment variables applied to every task (task env overrides).
+    pub env: Vec<(String, String)>,
+    /// Project-wide .env file loaded before task env (relative to the
+    /// config directory).
+    pub env_file: Option<PathBuf>,
 }
 
 /// Configuration for what command to run and on which platforms.
@@ -215,7 +246,7 @@ pub struct CommandNode {
     /// Variables usable in `{name}` interpolation. After load this holds the
     /// merged scope: globals, then ancestor groups, then this node's own
     /// (later entries win).
-    pub vars: Vec<(String, String)>,
+    pub vars: Vec<(String, VarValue)>,
     /// File glob patterns this task depends on (used by --watch and
     /// fingerprint-based up-to-date checks).
     pub sources: Vec<String>,
@@ -369,12 +400,12 @@ impl CommandNode {
     }
 
     /// Look up a config var on the node's merged scope (later entries win).
-    pub fn lookup_var(&self, name: &str) -> Option<String> {
+    pub fn lookup_var(&self, name: &str) -> Option<&VarValue> {
         self.vars
             .iter()
             .rev()
             .find(|(k, _)| k == name)
-            .map(|(_, v)| v.clone())
+            .map(|(_, v)| v)
     }
 
     /// All shell-bound template strings on this node: run commands, hooks,
