@@ -68,6 +68,7 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, config_path: &Path) -> Resu
 
     let root = config_path
         .parent()
+        .filter(|p| !p.as_os_str().is_empty())
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
     // Watchers report canonical paths (e.g. /private/var vs /var on macOS);

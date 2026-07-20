@@ -158,11 +158,16 @@ fn run() -> error::Result<()> {
         return watch::run(&tree, &matches, path);
     }
 
+    // The project root anchors child cwd, `dir`/`env-file` resolution,
+    // sources, and fingerprints. Absolute so none of it depends on where
+    // the user invoked from (`--file relative.kdl` included).
     let project_root = config_path
         .as_deref()
         .and_then(std::path::Path::parent)
+        .filter(|p| !p.as_os_str().is_empty())
         .map(std::path::Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
+    let project_root = std::path::absolute(&project_root).unwrap_or(project_root);
     exec::run(&tree, &matches, &project_root)
 }
 

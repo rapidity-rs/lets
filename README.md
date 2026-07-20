@@ -325,6 +325,11 @@ frontend {
 }
 ```
 
+Commands run from the directory containing `lets.kdl` regardless of where
+you invoke `lets` (discovery walks up, like git). `dir` and `env-file`
+resolve relative to it. Children receive `LETS_PROJECT_ROOT` and
+`LETS_INVOCATION_DIR` env vars.
+
 ### Platform-specific commands
 
 ```kdl

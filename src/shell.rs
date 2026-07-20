@@ -10,7 +10,7 @@
 //! its own process group via `setpgid`, and timeouts kill the entire group
 //! via `killpg`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -23,7 +23,9 @@ use crate::tree::{CommandNode, Config};
 /// Execution context derived from a CommandNode's settings.
 pub(crate) struct ExecContext {
     pub env: Vec<(String, String)>,
-    pub dir: Option<PathBuf>,
+    /// Working directory for child processes: the config-file directory,
+    /// or `dir` resolved against it.
+    pub dir: PathBuf,
     pub shell: Option<String>,
     pub dry_run: bool,
     pub timeout: Option<Duration>,
@@ -32,22 +34,48 @@ pub(crate) struct ExecContext {
 }
 
 impl ExecContext {
-    pub fn from_node(node: &CommandNode, config: &Config, dry_run: bool) -> Result<Self> {
-        let mut env = Vec::new();
+    pub fn from_node(
+        node: &CommandNode,
+        config: &Config,
+        project_root: &Path,
+        dry_run: bool,
+    ) -> Result<Self> {
+        // Commands run from the config-file directory, wherever the user
+        // invoked from — matching how `sources` and fingerprints resolve.
+        // `join` keeps absolute `dir` values as-is.
+        let dir = match &node.exec.dir {
+            Some(d) => project_root.join(d),
+            None => project_root.to_path_buf(),
+        };
 
-        // Load env-file first (explicit env vars override).
+        // Seed the location exports first so env values can reference them
+        // via `{$LETS_PROJECT_ROOT}` / `{$LETS_INVOCATION_DIR}`.
+        let mut env = vec![(
+            "LETS_PROJECT_ROOT".to_string(),
+            project_root.display().to_string(),
+        )];
+        if let Ok(invocation_dir) = std::env::current_dir() {
+            env.push((
+                "LETS_INVOCATION_DIR".to_string(),
+                invocation_dir.display().to_string(),
+            ));
+        }
+
+        // Load env-file next (explicit env vars override). The path is
+        // relative to the config directory, like every other config path.
         if let Some(env_file) = &node.env.file {
-            let iter = dotenvy::from_path_iter(env_file).map_err(|e| {
+            let env_path = project_root.join(env_file);
+            let iter = dotenvy::from_path_iter(&env_path).map_err(|e| {
                 Error::Other(format!(
                     "failed to read env-file '{}': {e}",
-                    env_file.display()
+                    env_path.display()
                 ))
             })?;
             for item in iter {
                 let (key, value) = item.map_err(|e| {
                     Error::Other(format!(
                         "failed to parse env-file '{}': {e}",
-                        env_file.display()
+                        env_path.display()
                     ))
                 })?;
                 env.push((key, value));
@@ -79,7 +107,7 @@ impl ExecContext {
 
         Ok(ExecContext {
             env,
-            dir: node.exec.dir.clone(),
+            dir,
             shell: node.exec.shell.clone().or_else(|| config.shell.clone()),
             dry_run,
             timeout: node.exec.timeout,
@@ -125,9 +153,7 @@ fn exec_shell_once(command: &str, ctx: &ExecContext, sink: &TaskSink) -> Result<
         cmd.envs(ctx.env.iter().map(|(k, v)| (k, v)));
     }
 
-    if let Some(dir) = &ctx.dir {
-        cmd.current_dir(dir);
-    }
+    cmd.current_dir(&ctx.dir);
 
     // The signal-handling machinery may leave SIGINT/SIGTERM blocked in this
     // thread; the mask survives fork+exec, which would make children immune
@@ -335,9 +361,7 @@ pub(crate) fn check_shell(command: &str, ctx: &ExecContext) -> Result<bool> {
     if !ctx.env.is_empty() {
         cmd.envs(ctx.env.iter().map(|(k, v)| (k, v)));
     }
-    if let Some(dir) = &ctx.dir {
-        cmd.current_dir(dir);
-    }
+    cmd.current_dir(&ctx.dir);
 
     let status = cmd
         .status()

@@ -48,6 +48,19 @@ lets build
 lets build --help
 ```
 
+## Run from anywhere
+
+`lets` finds your config like `git` finds `.git`: it walks up from the
+current directory until it hits a `lets.kdl`. Commands always execute from
+the directory containing that file, no matter how deep in the project you
+are when you invoke them — `cd src/deep/module && lets build` behaves
+exactly like running `lets build` at the root.
+
+Two environment variables tell your scripts where things are:
+
+- `LETS_PROJECT_ROOT` — the directory containing `lets.kdl`
+- `LETS_INVOCATION_DIR` — the directory you invoked `lets` from
+
 ## Set up shell completions
 
 For the best experience, add dynamic completions to your shell. This gives you tab completion for all your commands, arguments, and flags — and it updates automatically when you change your `lets.kdl`.

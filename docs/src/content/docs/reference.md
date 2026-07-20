@@ -215,15 +215,21 @@ defer "docker compose down"
 
 ### `env`
 
-Set environment variables.
+Set environment variables. Values may reference config vars (`{name}`) and
+the environment (`{$VAR}`).
 
 ```kdl
 env PORT="3000" RUST_LOG="debug"
 ```
 
+Every task also receives `LETS_PROJECT_ROOT` (the config-file directory),
+`LETS_INVOCATION_DIR` (where lets was invoked), and `LETS_ARG_*` /
+`LETS_FLAG_*` exports for its declared args and flags.
+
 ### `env-file`
 
-Load environment variables from a file. Explicit `env` values override.
+Load environment variables from a file, relative to the directory containing
+`lets.kdl`. Explicit `env` values override.
 
 ```kdl
 env-file ".env.local"
@@ -231,7 +237,9 @@ env-file ".env.local"
 
 ### `dir`
 
-Set working directory.
+Set the working directory, relative to the directory containing `lets.kdl`
+(absolute paths are used as-is). Without `dir`, commands run from the
+config-file directory — never from wherever `lets` happened to be invoked.
 
 ```kdl
 dir "packages/web"

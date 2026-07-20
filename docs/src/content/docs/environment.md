@@ -61,7 +61,7 @@ serve {
 }
 ```
 
-Supports standard `.env` syntax: comments, blank lines, quoted values, `export` prefix.
+Supports standard `.env` syntax: comments, blank lines, quoted values, `export` prefix. The path is relative to the directory containing `lets.kdl`.
 
 If both `env` and `env-file` are specified, explicit `env` values override env-file values:
 
@@ -75,7 +75,9 @@ serve {
 
 ## Working directory
 
-Run a command from a different directory:
+Commands always run from the directory containing `lets.kdl`, no matter
+where `lets` was invoked — discovery walks up to find the config, execution
+roots at it. Use `dir` to run from somewhere else:
 
 ```kdl
 frontend {
@@ -84,7 +86,18 @@ frontend {
 }
 ```
 
-The path is relative to the `lets.kdl` file location.
+The path is relative to the `lets.kdl` file location; absolute paths are
+used as-is.
+
+Two variables are always exported to child processes:
+
+| Variable | Value |
+|---|---|
+| `LETS_PROJECT_ROOT` | Directory containing `lets.kdl` |
+| `LETS_INVOCATION_DIR` | Directory `lets` was invoked from |
+
+A task that needs to operate on files where the user is standing can use
+`cd "$LETS_INVOCATION_DIR"` explicitly.
 
 ## Shell override
 

@@ -34,7 +34,7 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, project_root: &Path) -> Res
     let yes = matches.get_flag("yes");
     let dry_run = matches.get_flag("dry-run");
     let force = matches.get_flag("force");
-    let mut ctx = ExecContext::from_node(node, &tree.config, dry_run)?;
+    let mut ctx = ExecContext::from_node(node, &tree.config, project_root, dry_run)?;
     ctx.env.extend(export_env(node, Some(node_matches)));
 
     install_signal_handler();
@@ -480,7 +480,8 @@ impl Orchestrator<'_> {
             Some(parsed)
         };
 
-        let mut ctx = ExecContext::from_node(node, &self.tree.config, self.dry_run)?;
+        let mut ctx =
+            ExecContext::from_node(node, &self.tree.config, &self.project_root, self.dry_run)?;
         ctx.env.extend(export_env(node, matches.as_ref()));
 
         // Every template renders up front, before any of the task's work.
