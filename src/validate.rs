@@ -124,7 +124,7 @@ fn validate_inputs(commands: &[CommandNode], ctx: &SourceCtx) -> Result<()> {
 /// their names or shorts (clap would panic on the duplicate, or silently
 /// shadow the built-in).
 const RESERVED_FLAG_NAMES: &[&str] = &[
-    "file", "yes", "dry-run", "output", "watch", "force", "jobs", "help",
+    "file", "yes", "dry-run", "output", "watch", "force", "jobs", "color", "help",
 ];
 const RESERVED_FLAG_SHORTS: &[char] = &['f', 'y', 'j', 'h'];
 

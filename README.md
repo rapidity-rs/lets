@@ -270,6 +270,20 @@ $ lets --output group ci      # override per invocation
 
 Failed tasks always flush their buffered output, so nothing is lost in `group` mode.
 
+### Color
+
+Color follows the terminal, and `NO_COLOR` / `CLICOLOR_FORCE` are honored.
+`--color always|never|auto` overrides both — useful for piping into a pager
+that renders ANSI, or for a CI log that doesn't:
+
+```sh
+lets --color always ci | less -R
+lets --color never ci > build.log
+```
+
+Stdout and stderr are decided separately, so redirecting task output doesn't
+strip color from diagnostics still headed for your terminal.
+
 ### Watch mode
 
 Declare the files a task depends on, re-run it on change:
@@ -488,6 +502,7 @@ build "cargo build" description="Build the project"
 | `lets --verbose <cmd>` | Echo each command before it runs |
 | `lets --keep-going <cmd>` | Keep running independent tasks after a failure, report all failures |
 | `lets --summary <cmd>` | Per-task status and timing table after the run |
+| `lets --color <when>` | Force color on or off (`auto`, `always`, `never`) |
 | `lets self init` | Generate a starter lets.kdl |
 | `lets self check` | Validate your lets.kdl and print the parsed tree |
 | `lets self completions <shell>` | Generate shell completions |

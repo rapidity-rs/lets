@@ -1018,6 +1018,21 @@ fn reserved_global_flag_name_is_error() {
 }
 
 #[test]
+fn color_is_a_reserved_global_flag_name() {
+    // --color arrived after 0.4; a config flag of the same name would
+    // silently shadow it rather than colliding loudly.
+    let err = parse_err(
+        r#"
+        build {
+            flag color
+            run "cargo build {?color:--color}"
+        }
+        "#,
+    );
+    assert!(err.contains("reserved by the built-in"), "was: {err}");
+}
+
+#[test]
 fn reserved_global_flag_short_is_error() {
     let err = parse_err(
         r#"

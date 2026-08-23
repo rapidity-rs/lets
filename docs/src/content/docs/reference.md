@@ -48,6 +48,30 @@ Output modes:
 
 The global `--output <mode>` flag overrides the config value. The root command itself is never prefixed or grouped, since it may be interactive.
 
+## Color
+
+Color is decided once per run, per stream — stdout and stderr are judged
+separately, so piping task output to a file doesn't strip color from
+diagnostics still going to your terminal.
+
+In order of precedence:
+
+| | |
+|---|---|
+| `--color always` / `--color never` | Wins over everything |
+| `NO_COLOR` | Set and non-empty (and not `0`) turns color off |
+| `CLICOLOR_FORCE` | Set and non-empty (and not `0`) turns color on |
+| `TERM=dumb` | Turns color off |
+| Terminal detection | The default: color when the stream is a terminal |
+
+Under `group` and `prefixed` output — and for `silent` tasks — lets reads a
+child through a pipe, which normally makes the child disable its own color.
+When lets is coloring its own output it sets `CLICOLOR_FORCE=1` and
+`FORCE_COLOR=1` for those children so they keep theirs; a task's own `env`
+still overrides both.
+
+`--list --json` is never colored.
+
 ### `include`
 
 Import commands from another KDL file. Paths are relative to the including file.
@@ -106,7 +130,7 @@ Configs fail loudly at load rather than silently misbehaving:
 - **Reserved names.** `self` is reserved at the top level (for `lets self …`).
   Sibling commands can't share a name or alias. Flags can't reuse the
   built-in global flags (`--file`, `--yes`, `--dry-run`, `--output`,
-  `--watch`, `--force`, `--jobs`, `--help`) or their shorts
+  `--watch`, `--force`, `--jobs`, `--color`, `--help`) or their shorts
   (`-f`, `-y`, `-j`, `-h`).
 - **Repeated nodes.** List-like nodes (`run`, `deps`, `steps`, `env`,
   `vars`, `alias`, `sources`, `generates`, `status`, `precondition`,
