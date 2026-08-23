@@ -24,6 +24,10 @@ pub enum Error {
     #[diagnostic(transparent)]
     Parse(Box<SourceDiagnostic>),
 
+    /// A config error with nothing to point at. Only two places still
+    /// produce one — config-level `env` values and var rendering — because
+    /// neither vars nor config env carry spans in the tree. Everything
+    /// else should use [`Error::at`].
     #[error("{message}")]
     #[diagnostic()]
     ParseNoSpan { message: String },

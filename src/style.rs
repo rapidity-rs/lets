@@ -17,6 +17,9 @@ use std::sync::OnceLock;
 
 use clap::builder::styling::{AnsiColor, Style};
 
+/// Start of an ANSI escape sequence, which runs until the terminating `m`.
+const ESCAPE: char = '\u{1b}';
+
 /// When to emit colour, as requested on the command line.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ColorChoice {
@@ -142,6 +145,88 @@ fn styled(style: Style, text: impl Display, enabled: bool) -> String {
     }
 }
 
+/// Printable width of `text`: what it occupies on screen, with escape
+/// sequences discounted. Counts characters, not bytes — a multi-byte name
+/// would otherwise be measured as several columns wide.
+pub fn width(text: &str) -> usize {
+    let mut width = 0;
+    let mut in_escape = false;
+    for ch in text.chars() {
+        if in_escape {
+            in_escape = ch != 'm';
+        } else if ch == ESCAPE {
+            in_escape = true;
+        } else {
+            width += 1;
+        }
+    }
+    width
+}
+
+/// `text` with every escape sequence removed. Only tests need this —
+/// production code either styles text or measures it, never un-styles it —
+/// but assertions about layout are unreadable without it.
+#[cfg(test)]
+pub fn plain(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_escape = false;
+    for ch in text.chars() {
+        if in_escape {
+            in_escape = ch != 'm';
+        } else if ch == ESCAPE {
+            in_escape = true;
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Cut `text` to `budget` printable characters, marking the cut with an
+/// ellipsis. Escape sequences are carried through without spending budget,
+/// and a style left open by the cut is closed.
+///
+/// Callers rely on the result being exactly as wide as it claims: a line
+/// that overruns its budget wraps, and anything counting lines to redraw
+/// them is then off by one for the rest of the frame.
+pub fn truncate(text: &str, budget: usize) -> String {
+    if width(text) <= budget {
+        return text.to_string();
+    }
+    if budget < 2 {
+        return String::new();
+    }
+    let mut out = String::new();
+    let mut printable = 0;
+    let mut in_escape = false;
+    let mut styled = false;
+    for ch in text.chars() {
+        if in_escape {
+            out.push(ch);
+            in_escape = ch != 'm';
+            continue;
+        }
+        if ch == ESCAPE {
+            out.push(ch);
+            in_escape = true;
+            styled = true;
+            continue;
+        }
+        if printable + 1 > budget - 1 {
+            break;
+        }
+        out.push(ch);
+        printable += 1;
+    }
+    out.push('…');
+    // Only when the text actually opened a style: a stray reset in plain
+    // output is exactly the kind of leak the style module exists to stop.
+    if styled {
+        out.push_str("\u{1b}[0m");
+    }
+    out
+}
+
 /// De-emphasized text: tree connectors, descriptions, echoed commands,
 /// anything the eye should skip on the way to the content.
 pub const DIM: Style = Style::new().dimmed();
@@ -193,6 +278,50 @@ mod tests {
     fn styled_is_a_no_op_when_disabled() {
         assert_eq!(styled(NAME, "build", false), "build");
         assert!(styled(NAME, "build", true).contains('\u{1b}'));
+    }
+
+    #[test]
+    fn width_and_plain_discount_escapes() {
+        let styled = styled(NAME, "build", true);
+        assert_eq!(width(&styled), 5);
+        assert_eq!(plain(&styled), "build");
+        assert_eq!(width("build"), 5);
+    }
+
+    #[test]
+    fn truncate_leaves_text_that_fits() {
+        assert_eq!(truncate("abc", 3), "abc");
+        assert_eq!(truncate("abc", 10), "abc");
+        // Even below the ellipsis threshold, text that fits is untouched.
+        assert_eq!(truncate("a", 1), "a");
+    }
+
+    #[test]
+    fn truncate_marks_the_cut_and_keeps_its_budget() {
+        let cut = truncate("0123456789", 5);
+        assert_eq!(cut, "0123…");
+        assert_eq!(width(&cut), 5);
+        assert_eq!(truncate("abcdef", 1), "");
+    }
+
+    #[test]
+    fn truncate_counts_characters_not_bytes() {
+        // Five characters, fifteen bytes: a byte-based cut would slice one
+        // in half.
+        assert_eq!(truncate("日本語文字", 4), "日本語…");
+    }
+
+    #[test]
+    fn truncate_carries_escapes_and_closes_the_style() {
+        let cut = truncate(&styled(DIM, "0123456789", true), 5);
+        assert_eq!(width(&cut), 5);
+        assert_eq!(plain(&cut), "0123…");
+        assert!(cut.ends_with("\u{1b}[0m"), "cut: {cut:?}");
+    }
+
+    #[test]
+    fn truncate_adds_no_reset_to_plain_text() {
+        assert!(!truncate("0123456789", 5).contains(ESCAPE));
     }
 
     #[test]

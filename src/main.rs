@@ -10,26 +10,44 @@
 //! lets.kdl → parse → tree → cli (clap) → exec → shell
 //! ```
 //!
+//! Loading a config:
+//!
+//! - [`discover`] — finds `lets.kdl` by walking up from cwd
 //! - [`parse`] — KDL file → [`tree::CommandTree`]
 //! - [`tree`] — internal representation of commands, args, flags
 //! - [`validate`] — ref resolution and cycle detection
+//! - [`error`] — every diagnostic the tool can report
+//!
+//! Running a command:
+//!
 //! - [`cli`] — converts tree into [`clap::Command`]
 //! - [`exec`] — orchestration: deps, steps, hooks, interpolation
 //! - [`shell`] — process spawning, timeout, retry, signal handling
 //! - [`interpolate`] — unified `{…}` placeholder rendering
-//! - [`discover`] — finds `lets.kdl` by walking up from cwd
+//! - [`fingerprint`] — content hashes behind `sources` up-to-date checks
+//! - [`watch`] — re-runs a command when its `sources` change
+//!
+//! Presenting it:
+//!
+//! - [`style`] — one colour decision, one palette, shared text measurement
+//! - [`output`] — per-task output routing for parallel runs
+//! - [`listing`] — the `--list` tree and its JSON form
+//! - [`picker`] — the interactive command picker for a bare `lets`
+//! - [`plan`] — dry-run narration
+//! - [`self_commands`] — the `lets self` family
 
 mod cli;
-mod commands;
 mod discover;
 mod error;
 mod exec;
 mod fingerprint;
 mod interpolate;
+mod listing;
 mod output;
 mod parse;
 mod picker;
 mod plan;
+mod self_commands;
 mod shell;
 mod style;
 mod tree;
@@ -118,13 +136,13 @@ fn run() -> error::Result<()> {
         let cmd = cli::build_self_command();
         let matches = cmd.get_matches_from(std::env::args().skip(1));
         if let Some(("init", _)) = matches.subcommand() {
-            return commands::cmd_init();
+            return self_commands::cmd_init();
         }
     }
 
     // Handle `lets self setup <shell>` before config discovery.
     if is_self_setup() {
-        return commands::handle_self_setup();
+        return self_commands::handle_self_setup();
     }
 
     let (mut tree, config_path) = match resolve_config_path() {
@@ -175,9 +193,9 @@ fn run() -> error::Result<()> {
     // Built-in flags.
     if matches.get_flag("list") {
         if matches.get_flag("json") {
-            commands::print_command_list_json(&tree);
+            listing::print_command_list_json(&tree);
         } else {
-            commands::print_command_list(&tree, false);
+            listing::print_command_list(&tree, false);
         }
         return Ok(());
     }
@@ -245,12 +263,12 @@ fn handle_self(
         Some(("check", _)) => {
             println!(
                 "lets.kdl is valid ({} commands)",
-                commands::count_commands(tree)
+                listing::count_commands(tree)
             );
             // The parsed tree, hidden commands included: an unintended
             // subcommand (e.g. a misplaced keyword) shows up here.
             println!();
-            commands::print_command_list(tree, true);
+            listing::print_command_list(tree, true);
             Ok(())
         }
         Some(("completions", sub_matches)) => {

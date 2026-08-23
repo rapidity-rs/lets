@@ -1,10 +1,12 @@
-//! Built-in commands and the list/tree formatter.
+//! The `--list` command tree and its machine-readable form.
+//!
+//! Two renderings of one tree: an aligned, styled listing for people, and
+//! compact JSON for tooling. Both are driven from the same `CommandTree`,
+//! so they can never disagree about what a config contains.
 
 use std::io::IsTerminal;
-use std::path::PathBuf;
 
-use crate::error;
-use crate::style::{self, DIM, GROUP, NAME};
+use crate::style::{self, DIM, GROUP, NAME, truncate};
 use crate::tree;
 
 /// Count total commands (including nested children) in a tree.
@@ -214,37 +216,6 @@ fn print_rows(rows: &[Row]) {
     }
 }
 
-/// Cut styled text to `budget` printable characters, ending in an ellipsis
-/// and closing any style the cut left open.
-fn truncate(text: &str, budget: usize) -> String {
-    if budget < 2 {
-        return String::new();
-    }
-    let mut out = String::new();
-    let mut printable = 0;
-    let mut in_escape = false;
-    for ch in text.chars() {
-        if in_escape {
-            out.push(ch);
-            in_escape = ch != 'm';
-            continue;
-        }
-        if ch == '\u{1b}' {
-            out.push(ch);
-            in_escape = true;
-            continue;
-        }
-        if printable + 1 > budget - 1 {
-            out.push('…');
-            out.push_str("\u{1b}[0m");
-            return out;
-        }
-        out.push(ch);
-        printable += 1;
-    }
-    out
-}
-
 /// Terminal width, or None when output is redirected and nothing should be
 /// trimmed to fit.
 fn terminal_width() -> Option<usize> {
@@ -260,93 +231,6 @@ fn sorted_if<'a>(commands: &[&'a tree::CommandNode], sorted: bool) -> Vec<&'a tr
         items.sort_by(|a, b| a.name.cmp(&b.name));
     }
     items
-}
-
-/// Handle `lets self setup [shell]` — print the shell init line.
-pub(crate) fn handle_self_setup() -> error::Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    let positional: Vec<&str> = args[1..]
-        .iter()
-        .filter(|a| !a.starts_with('-'))
-        .map(|s| s.as_str())
-        .collect();
-
-    let shell = positional.get(2).copied().unwrap_or_else(|| {
-        // Auto-detect from $SHELL env var.
-        // We can't return a reference to a local, so just match common shells.
-        let shell_env = std::env::var("SHELL").unwrap_or_default();
-        if shell_env.ends_with("/fish") {
-            "fish"
-        } else if shell_env.ends_with("/bash") {
-            "bash"
-        } else {
-            "zsh"
-        }
-    });
-
-    match shell {
-        "zsh" => println!(r#"eval "$(LETS_COMPLETE=zsh command lets)""#),
-        "bash" => println!(r#"eval "$(LETS_COMPLETE=bash command lets)""#),
-        "fish" => println!(r#"LETS_COMPLETE=fish command lets | source"#),
-        other => {
-            return Err(error::Error::Other(format!(
-                "unsupported shell '{other}' (supported: zsh, bash, fish)"
-            )));
-        }
-    }
-
-    Ok(())
-}
-
-/// Create a new `lets.kdl` with project-appropriate starter tasks.
-pub(crate) fn cmd_init() -> error::Result<()> {
-    let path = PathBuf::from("lets.kdl");
-    if path.exists() {
-        return Err(error::Error::Other(
-            "lets.kdl already exists in this directory".to_string(),
-        ));
-    }
-
-    let mut tasks = Vec::new();
-
-    // Detect project type and suggest tasks.
-    if PathBuf::from("Cargo.toml").exists() {
-        tasks.push(r#"build "cargo build""#);
-        tasks.push(r#"test "cargo test""#);
-        tasks.push(r#"run "cargo run""#);
-        tasks.push(r#"lint "cargo clippy -- -D warnings""#);
-    } else if PathBuf::from("package.json").exists() {
-        tasks.push(r#"install "npm install""#);
-        tasks.push(r#"dev "npm run dev""#);
-        tasks.push(r#"build "npm run build""#);
-        tasks.push(r#"test "npm test""#);
-        tasks.push(r#"lint "npm run lint""#);
-    } else if PathBuf::from("pyproject.toml").exists() || PathBuf::from("setup.py").exists() {
-        tasks.push(r#"install "pip install -e .""#);
-        tasks.push(r#"test "pytest""#);
-        tasks.push(r#"lint "ruff check .""#);
-    } else if PathBuf::from("go.mod").exists() {
-        tasks.push(r#"build "go build ./...""#);
-        tasks.push(r#"test "go test ./...""#);
-        tasks.push(r#"lint "golangci-lint run""#);
-    } else if PathBuf::from("Makefile").exists() {
-        tasks.push(r#"build "make build""#);
-        tasks.push(r#"test "make test""#);
-    } else {
-        tasks.push(r#"hello "echo hello from lets!""#);
-    }
-
-    let mut content = String::from("description \"My project tasks\"\n\n");
-    for task in &tasks {
-        content.push_str(task);
-        content.push('\n');
-    }
-
-    std::fs::write(&path, &content)
-        .map_err(|e| error::Error::Other(format!("failed to write lets.kdl: {e}")))?;
-
-    println!("Created lets.kdl with {} task(s)", tasks.len());
-    Ok(())
 }
 
 /// Print the command tree as compact JSON for tooling (`lets --list --json`).
@@ -461,26 +345,10 @@ fn json_str_array(items: &[String]) -> String {
 mod tests {
     use super::*;
 
-    /// Printable text: `str::find` and `chars().count()` would otherwise
-    /// measure UTF-8 bytes and escape sequences rather than columns.
-    fn plain(text: &str) -> String {
-        let mut out = String::new();
-        let mut in_escape = false;
-        for ch in text.chars() {
-            if in_escape {
-                in_escape = ch != 'm';
-            } else if ch == '\u{1b}' {
-                in_escape = true;
-            } else {
-                out.push(ch);
-            }
-        }
-        out
-    }
-
-    /// Column at which `needle` starts, counting characters.
+    /// Column at which `needle` starts, counting characters: `str::find`
+    /// reports bytes, and escapes are not columns at all.
     fn column_of(line: &str, needle: &str) -> Option<usize> {
-        let line = plain(line);
+        let line = style::plain(line);
         line.find(needle).map(|byte| line[..byte].chars().count())
     }
 
@@ -530,30 +398,12 @@ mod tests {
         let lines = layout(&rows, Some(60));
 
         for line in &lines {
-            let width = plain(line).chars().count();
+            let width = style::width(line);
             assert!(width <= 60, "{width} columns: {line:?}");
         }
         // The column is capped at two fifths of the width, so a long name
         // can't push every description off the screen.
         assert_eq!(column_of(&lines[1], "short"), Some(26), "lines: {lines:#?}");
-    }
-
-    #[test]
-    fn truncation_marks_the_cut_and_closes_the_style() {
-        let cut = truncate("0123456789", 5);
-        assert_eq!(plain(&cut), "0123…", "cut: {cut:?}");
-        assert!(cut.ends_with("\u{1b}[0m"), "cut: {cut:?}");
-
-        // Escape sequences are carried through without spending budget.
-        let styled = format!("\u{1b}[2m{}\u{1b}[0m", "0123456789");
-        let cut = truncate(&styled, 5);
-        assert!(cut.starts_with("\u{1b}[2m"), "cut: {cut:?}");
-        assert_eq!(plain(&cut), "0123…", "cut: {cut:?}");
-    }
-
-    #[test]
-    fn text_that_already_fits_is_left_alone() {
-        assert_eq!(truncate("abc", 10), "abc");
     }
 
     fn node(name: &str) -> tree::CommandNode {

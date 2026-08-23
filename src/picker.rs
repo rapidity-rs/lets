@@ -18,7 +18,7 @@ use console::{Key, Term};
 use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
 
-use crate::style::{self, DIM, GROUP, NAME};
+use crate::style::{self, DIM, GROUP, NAME, truncate};
 use crate::tree::{CommandNode, CommandTree};
 
 /// A command the user can pick.
@@ -89,7 +89,7 @@ fn collect(tree: &CommandTree) -> Vec<Choice> {
             let mut path = prefix.to_vec();
             path.push(cmd.name.clone());
             if cmd.is_runnable() {
-                let signature = crate::commands::signature(cmd);
+                let signature = crate::listing::signature(cmd);
                 let description = cmd.description.clone();
                 // Names, aliases, and arguments are what you usually
                 // reach for; descriptions make a task findable by what it
@@ -503,21 +503,6 @@ fn plain_label(choice: &Choice, flat: bool) -> String {
     }
 }
 
-/// Cut plain text to `budget` characters. Every line the picker draws goes
-/// through this: a line that wraps would count as one row but occupy two,
-/// and every redraw after it would be misaligned.
-fn truncate(text: &str, budget: usize) -> String {
-    if text.chars().count() <= budget {
-        return text.to_string();
-    }
-    if budget < 2 {
-        return String::new();
-    }
-    let mut out: String = text.chars().take(budget - 1).collect();
-    out.push('…');
-    out
-}
-
 /// Whether an interactive picker can be shown: both the keyboard and the
 /// display it draws on have to be a terminal, and colour-free terminals
 /// still work — only redirection rules it out.
@@ -667,19 +652,5 @@ mod tests {
                 state.cursor
             );
         }
-    }
-
-    #[test]
-    fn truncate_marks_the_cut() {
-        assert_eq!(truncate("abcdef", 4), "abc…");
-        assert_eq!(truncate("abc", 10), "abc");
-        assert_eq!(truncate("abcdef", 1), "");
-    }
-
-    #[test]
-    fn truncate_counts_characters_not_bytes() {
-        // Four characters, twelve bytes: a byte-based cut would slice one
-        // in half and corrupt the line.
-        assert_eq!(truncate("日本語文字", 4), "日本語…");
     }
 }
