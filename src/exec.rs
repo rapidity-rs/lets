@@ -482,7 +482,8 @@ impl Orchestrator<'_> {
             self.collect_interaction(target, &child_key, yes, visited)?;
         }
 
-        let vars = run_interactive(node, yes)?;
+        let task = key.join(" ");
+        let vars = run_interactive(node, &task, yes)?;
 
         // Confirmations are skipped in dry-run (nothing will execute) and
         // auto-accepted by --yes. Without a TTY, dialoguer fails — a command
@@ -498,6 +499,7 @@ impl Orchestrator<'_> {
                 self.tree.config.shell.as_deref(),
                 &self.project_root,
             )?;
+            require_terminal(&task, "`confirm`", "pass --yes to accept it".to_string())?;
             let confirmed = dialoguer::Confirm::new()
                 .with_prompt(&rendered)
                 .default(false)
@@ -952,7 +954,7 @@ fn export_env(node: &CommandNode, matches: Option<&ArgMatches>) -> Vec<(String, 
 }
 
 /// Process interactive prompts and choices, returning variable bindings.
-fn run_interactive(node: &CommandNode, yes: bool) -> Result<HashMap<String, String>> {
+fn run_interactive(node: &CommandNode, task: &str, yes: bool) -> Result<HashMap<String, String>> {
     let mut vars = HashMap::new();
 
     // Process choose nodes first (so confirm can reference them).
@@ -968,6 +970,17 @@ fn run_interactive(node: &CommandNode, yes: bool) -> Result<HashMap<String, Stri
                 ))
             })?
         } else {
+            require_terminal(
+                task,
+                &format!("`choose {}`", choose.name),
+                match &choose.default {
+                    Some(default) => format!("pass --yes to use its default, \"{default}\""),
+                    None => format!(
+                        "give `choose {}` a default=\"…\", then pass --yes",
+                        choose.name
+                    ),
+                },
+            )?;
             let cursor = choose
                 .default
                 .as_ref()
@@ -989,6 +1002,17 @@ fn run_interactive(node: &CommandNode, yes: bool) -> Result<HashMap<String, Stri
         let value = if yes {
             prompt.default.clone().unwrap_or_default()
         } else {
+            require_terminal(
+                task,
+                &format!("`prompt {}`", prompt.name),
+                match &prompt.default {
+                    Some(default) => format!("pass --yes to use its default, \"{default}\""),
+                    None => format!(
+                        "pass --yes to use an empty value, or give `prompt {}` a default=\"…\"",
+                        prompt.name
+                    ),
+                },
+            )?;
             let mut p = dialoguer::Input::<String>::new().with_prompt(&prompt.message);
             if let Some(default) = &prompt.default {
                 p = p.default(default.clone());
@@ -1000,6 +1024,21 @@ fn run_interactive(node: &CommandNode, yes: bool) -> Result<HashMap<String, Stri
     }
 
     Ok(vars)
+}
+
+/// dialoguer draws on stderr and reads keys from stdin; with either
+/// redirected there is no way to ask, so say what is missing before any
+/// work starts rather than letting the prompt fail mid-run.
+fn require_terminal(task: &str, prompt: &str, remedy: String) -> Result<()> {
+    use std::io::IsTerminal;
+    if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
+        return Ok(());
+    }
+    Err(Error::NotInteractive {
+        task: task.to_string(),
+        prompt: prompt.to_string(),
+        remedy,
+    })
 }
 
 /// Interpolation for confirm messages: interactive bindings first, then the

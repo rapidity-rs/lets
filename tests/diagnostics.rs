@@ -115,3 +115,80 @@ fn help_version_and_init_still_work_without_a_config() {
         );
     }
 }
+
+/// Without a terminal, dialoguer failed with a bare "IO error: not a
+/// terminal" — no task, no prompt, no way forward.
+#[test]
+fn prompts_without_a_terminal_name_the_task_and_the_way_out() {
+    let cases = [
+        (
+            r#"deploy {
+                choose environment "dev" "prod" default="dev"
+                run "echo {environment}"
+            }"#,
+            "deploy",
+            "choose environment",
+            "\"dev\"",
+        ),
+        (
+            r#"greet {
+                prompt name "Who?" default="world"
+                run "echo {name}"
+            }"#,
+            "greet",
+            "prompt name",
+            "\"world\"",
+        ),
+        (
+            r#"clean {
+                confirm "Sure?"
+                run "echo cleaning"
+            }"#,
+            "clean",
+            "confirm",
+            "--yes",
+        ),
+    ];
+
+    for (config, task, prompt, remedy) in cases {
+        let stderr = stderr_for(config, &[task]);
+        assert!(stderr.contains(task), "stderr: {stderr}");
+        assert!(stderr.contains(prompt), "stderr: {stderr}");
+        assert!(stderr.contains("--yes"), "stderr: {stderr}");
+        assert!(stderr.contains(remedy), "stderr: {stderr}");
+        assert!(!stderr.contains("IO error"), "stderr: {stderr}");
+    }
+}
+
+/// A choose with no default can't be answered by --yes either; say so
+/// rather than reporting only that there is no terminal.
+#[test]
+fn choose_without_a_default_asks_for_one() {
+    let stderr = stderr_for(
+        r#"deploy {
+            choose environment "dev" "prod"
+            run "echo {environment}"
+        }"#,
+        &["deploy"],
+    );
+    assert!(stderr.contains("default="), "stderr: {stderr}");
+}
+
+/// The task that needs the answer is named, not the one invoked.
+#[test]
+fn a_dependency_needing_input_names_itself() {
+    let stderr = stderr_for(
+        r#"
+        deploy {
+            confirm "Sure?"
+            run "echo deploying"
+        }
+        release {
+            deps "deploy"
+            run "echo tagging"
+        }
+        "#,
+        &["release"],
+    );
+    assert!(stderr.contains("task 'deploy'"), "stderr: {stderr}");
+}

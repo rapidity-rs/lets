@@ -59,6 +59,17 @@ pub enum Error {
         skipped: Option<String>,
     },
 
+    /// A prompt with no way to ask. Reported before anything runs, naming
+    /// the prompt and how to get past it, rather than surfacing dialoguer's
+    /// bare "not a terminal".
+    #[error("task '{task}' needs an answer for {prompt}, but there is no terminal to ask on")]
+    #[diagnostic(help("{remedy}"))]
+    NotInteractive {
+        task: String,
+        prompt: String,
+        remedy: String,
+    },
+
     #[error("{0}")]
     Other(String),
 }
