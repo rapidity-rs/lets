@@ -166,20 +166,22 @@ fn record_freshness(
         && let fingerprint::Freshness::Stale(digest) = freshness
         && let Err(e) = fingerprint::record(project_root, key, &digest)
     {
-        eprintln!("\x1b[33mwarning:\x1b[0m could not record fingerprint: {e}");
+        crate::error::Warning::with_help(
+            format!("could not record fingerprint for '{}': {e}", key.join(" ")),
+            "the task will re-run next time; check that .lets/ is writable",
+        )
+        .emit();
     }
 }
 
 /// Print a deprecation warning if the node is marked deprecated.
 fn warn_deprecated(node: &CommandNode) {
     if let Some(msg) = &node.deprecated {
+        let warning = format!("'{}' is deprecated", node.name);
         if msg.is_empty() {
-            eprintln!("\x1b[33mwarning:\x1b[0m '{}' is deprecated", node.name);
+            crate::error::Warning::new(warning).emit();
         } else {
-            eprintln!(
-                "\x1b[33mwarning:\x1b[0m '{}' is deprecated. {msg}",
-                node.name
-            );
+            crate::error::Warning::with_help(warning, msg).emit();
         }
     }
 }
@@ -204,7 +206,11 @@ fn install_signal_handler() {
         shell::terminate_process_groups();
     });
     if let Err(e) = result {
-        eprintln!("\x1b[33mwarning:\x1b[0m could not install signal handler: {e}");
+        crate::error::Warning::with_help(
+            format!("could not install signal handler: {e}"),
+            "Ctrl-C will not stop child processes or run defer commands",
+        )
+        .emit();
     }
 }
 
@@ -220,7 +226,7 @@ fn run_defers(defers: &[String], ctx: &ExecContext, sink: &TaskSink) {
                 Error::CommandSignaled { .. } => "terminated by a signal".to_string(),
                 other => other.to_string(),
             };
-            eprintln!("\x1b[33mwarning:\x1b[0m defer `{defer}` failed ({detail})");
+            crate::error::Warning::new(format!("defer `{defer}` failed ({detail})")).emit();
         }
     }
 }

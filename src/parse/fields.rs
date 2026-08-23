@@ -14,11 +14,10 @@ fn parse_value_type(node: &KdlNode, owner: &str) -> Result<Option<FlagType>> {
         Some("string") => Ok(Some(FlagType::String)),
         Some("int") => Ok(Some(FlagType::Int)),
         Some("float") => Ok(Some(FlagType::Float)),
-        Some(other) => Err(Error::ParseNoSpan {
-            message: format!(
-                "invalid type '{other}' on '{owner}' (expected string, int, or float)"
-            ),
-        }),
+        Some(other) => Err(Error::at(
+            format!("invalid type '{other}' on '{owner}' (expected string, int, or float)"),
+            node.span(),
+        )),
     }
 }
 
@@ -35,8 +34,12 @@ pub(super) fn parse_arg(node: &KdlNode) -> Result<ArgDef> {
 
     let name = positional
         .first()
-        .ok_or_else(|| Error::ParseNoSpan {
-            message: "arg node requires a name as the first argument".to_string(),
+        .ok_or_else(|| {
+            Error::at_with_help(
+                "arg node requires a name as the first argument",
+                node.span(),
+                "write it as `arg name`",
+            )
         })?
         .clone();
 
@@ -77,8 +80,12 @@ pub(super) fn parse_flag(node: &KdlNode) -> Result<FlagDef> {
 
     let name = positional
         .first()
-        .ok_or_else(|| Error::ParseNoSpan {
-            message: "flag node requires a name as the first argument".to_string(),
+        .ok_or_else(|| {
+            Error::at_with_help(
+                "flag node requires a name as the first argument",
+                node.span(),
+                "write it as `flag name`",
+            )
         })?
         .clone();
 
@@ -96,12 +103,13 @@ pub(super) fn parse_flag(node: &KdlNode) -> Result<FlagDef> {
                 rest = &rest[1..];
             }
             _ => {
-                return Err(Error::ParseNoSpan {
-                    message: format!(
+                return Err(Error::at(
+                    format!(
                         "invalid short alias '{candidate}' on flag '{name}' \
                          (expected a single character like \"-x\")"
                     ),
-                });
+                    node.span(),
+                ));
             }
         }
     }
@@ -142,8 +150,12 @@ pub(super) fn parse_prompt(node: &KdlNode) -> Result<PromptDef> {
 
     let name = positional
         .first()
-        .ok_or_else(|| Error::ParseNoSpan {
-            message: "prompt node requires a name as the first argument".to_string(),
+        .ok_or_else(|| {
+            Error::at_with_help(
+                "prompt node requires a name as the first argument",
+                node.span(),
+                "write it as `prompt name \"Question?\"`",
+            )
         })?
         .clone();
 
@@ -168,8 +180,12 @@ pub(super) fn parse_choose(node: &KdlNode) -> Result<ChooseDef> {
 
     let name = positional
         .first()
-        .ok_or_else(|| Error::ParseNoSpan {
-            message: "choose node requires a name as the first argument".to_string(),
+        .ok_or_else(|| {
+            Error::at_with_help(
+                "choose node requires a name as the first argument",
+                node.span(),
+                "write it as `choose name \"one\" \"two\"`",
+            )
         })?
         .clone();
 
@@ -179,9 +195,11 @@ pub(super) fn parse_choose(node: &KdlNode) -> Result<ChooseDef> {
     if let Some(default) = &default
         && !choices.contains(default)
     {
-        return Err(Error::ParseNoSpan {
-            message: format!("choose '{name}': default '{default}' is not one of the choices"),
-        });
+        return Err(Error::at_with_help(
+            format!("choose '{name}': default '{default}' is not one of the choices"),
+            node.span(),
+            format!("the choices are: {}", choices.join(", ")),
+        ));
     }
 
     Ok(ChooseDef {

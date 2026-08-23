@@ -336,10 +336,15 @@ fn check_template(
                 }
                 _ => e.to_string(),
             };
-            Err(ctx.error(
-                format!("in '{}': {message} in \"{template}\"", cmd.name),
-                cmd.span,
-            ))
+            // Point at the template itself when it can be located; only
+            // quote it in the message when it can't.
+            match ctx.narrow(cmd.span, template) {
+                Some(span) => Err(ctx.error(format!("in '{}': {message}", cmd.name), span)),
+                None => Err(ctx.error(
+                    format!("in '{}': {message} in \"{template}\"", cmd.name),
+                    cmd.span,
+                )),
+            }
         }
     }
 }
@@ -350,9 +355,8 @@ fn validate_sources(commands: &[CommandNode], ctx: &SourceCtx) -> Result<()> {
         for (kind, patterns) in [("sources", &cmd.sources), ("generates", &cmd.generates)] {
             for pattern in patterns {
                 if let Err(e) = globset::Glob::new(pattern) {
-                    return Err(
-                        ctx.error(format!("invalid {kind} glob '{pattern}': {e}"), cmd.span)
-                    );
+                    let span = ctx.narrow(cmd.span, pattern).unwrap_or(cmd.span);
+                    return Err(ctx.error(format!("invalid {kind} glob '{pattern}': {e}"), span));
                 }
             }
         }
@@ -525,9 +529,9 @@ mod tests {
     }
 
     fn parse_err(input: &str) -> String {
-        parse_source(input, &PathBuf::from("test.kdl"))
-            .unwrap_err()
-            .to_string()
+        crate::parse::tests::render_error(
+            &parse_source(input, &PathBuf::from("test.kdl")).unwrap_err(),
+        )
     }
 
     #[test]

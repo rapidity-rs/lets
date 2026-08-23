@@ -192,3 +192,88 @@ fn a_dependency_needing_input_names_itself() {
     );
     assert!(stderr.contains("task 'deploy'"), "stderr: {stderr}");
 }
+
+/// Config paths are absolute internally; a long one wraps across most of a
+/// diagnostic header, so they render the way the user would type them.
+#[test]
+fn diagnostics_name_the_config_relative_to_the_working_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("lets.kdl"),
+        "a { deps \"b\" }\nb { deps \"a\" }\n",
+    )
+    .unwrap();
+    let nested = dir.path().join("crates").join("core");
+    std::fs::create_dir_all(&nested).unwrap();
+
+    let from_root = lets_bin()
+        .current_dir(dir.path())
+        .arg("--list")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&from_root.stderr);
+    assert!(stderr.contains("[lets.kdl:"), "stderr: {stderr}");
+
+    let from_nested = lets_bin()
+        .current_dir(&nested)
+        .arg("--list")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&from_nested.stderr);
+    assert!(stderr.contains("[../../lets.kdl:"), "stderr: {stderr}");
+}
+
+/// A misspelled keyword is the most common config mistake; it used to
+/// report no location at all.
+#[test]
+fn keyword_typo_points_at_the_line_and_suggests_a_fix() {
+    let stderr = stderr_for(
+        "build {\n    descriptin \"oops\"\n    run \"cargo build\"\n}\n",
+        &["--list"],
+    );
+
+    assert!(stderr.contains("lets.kdl:2:5"), "stderr: {stderr}");
+    assert!(stderr.contains("descriptin \"oops\""), "stderr: {stderr}");
+    assert!(
+        stderr.contains("did you mean 'description'?"),
+        "stderr: {stderr}"
+    );
+}
+
+/// The span marks the run command that owns the placeholder, not the whole
+/// block the command happens to sit in.
+#[test]
+fn unresolved_placeholder_marks_its_own_line() {
+    let stderr = stderr_for(
+        "build {\n  run \"cargo build\"\n  run \"cargo doc {nope}\"\n}\n",
+        &["--list"],
+    );
+
+    assert!(stderr.contains("lets.kdl:3:"), "stderr: {stderr}");
+    assert!(stderr.contains("{nope}"), "stderr: {stderr}");
+}
+
+/// Warnings render through the same handler as errors, so they pick up the
+/// same severity marker and colour handling.
+#[test]
+fn deprecation_warnings_render_as_warnings() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        old {
+            deprecated "use 'new' instead"
+            run "echo ran"
+        }
+        "#,
+    );
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "old"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("'old' is deprecated"), "stderr: {stderr}");
+    assert!(stderr.contains("use 'new' instead"), "stderr: {stderr}");
+    // The task still runs, and its output is untouched.
+    assert!(String::from_utf8_lossy(&output.stdout).contains("ran"));
+}

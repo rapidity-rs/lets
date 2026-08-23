@@ -158,7 +158,7 @@ pub(super) fn parse_platform_list(node: &KdlNode) -> Result<Vec<Platform>> {
         .filter(|e| e.name().is_none())
         .filter_map(|e| {
             let s = e.value().as_string()?;
-            Some(Platform::from_str(s).map_err(|msg| Error::ParseNoSpan { message: msg }))
+            Some(Platform::from_str(s).map_err(|msg| Error::at(msg, node.span())))
         })
         .collect()
 }

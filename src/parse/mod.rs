@@ -12,7 +12,7 @@ mod helpers;
 mod typo;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use std::path::{Path, PathBuf};
 
@@ -45,6 +45,43 @@ impl SourceCtx {
             miette::NamedSource::new(self.name.clone(), self.source.clone()),
             span,
         )))
+    }
+
+    /// Narrow a node's span to the first occurrence of `text` inside it, so
+    /// a diagnostic about one string in a block marks that string instead of
+    /// the whole block. `None` when the text isn't in the source verbatim —
+    /// escapes and multi-line strings don't survive parsing unchanged.
+    pub(crate) fn narrow(
+        &self,
+        span: miette::SourceSpan,
+        text: &str,
+    ) -> Option<miette::SourceSpan> {
+        if text.is_empty() {
+            return None;
+        }
+        let start = span.offset();
+        let end = (start + span.len()).min(self.source.len());
+        let at = self.source.get(start..end)?.find(text)?;
+        Some(miette::SourceSpan::new((start + at).into(), text.len()))
+    }
+
+    /// Attach this file's text to an error that carries only a span, so a
+    /// parser that never saw the document still produces a full snippet.
+    fn attach(&self, err: Error) -> Error {
+        let Error::ParseAt {
+            message,
+            span,
+            help,
+        } = err
+        else {
+            return err;
+        };
+        Error::Parse(Box::new(crate::error::SourceDiagnostic {
+            message,
+            src: miette::NamedSource::new(self.name.clone(), self.source.clone()),
+            labels: vec![miette::LabeledSpan::new_with_span(None, span)],
+            help,
+        }))
     }
 
     /// Like [`SourceCtx::error`], but marks the span with a short phrase
@@ -113,10 +150,13 @@ pub fn parse_file(path: &Path) -> Result<CommandTree> {
 
 pub(crate) fn parse_source(source: &str, path: &Path) -> Result<CommandTree> {
     let ctx = SourceCtx {
-        name: path.display().to_string(),
+        name: crate::error::display_path(path),
         source: source.to_string(),
     };
+    parse_document(source, path, &ctx).map_err(|e| ctx.attach(e))
+}
 
+fn parse_document(source: &str, path: &Path, ctx: &SourceCtx) -> Result<CommandTree> {
     let doc: KdlDocument = source
         .parse()
         .map_err(|e: kdl::KdlError| ctx.syntax_error(&e))?;
@@ -173,13 +213,13 @@ pub(crate) fn parse_source(source: &str, path: &Path) -> Result<CommandTree> {
     }
 
     resolve_vars(&mut tree)?;
-    crate::validate::validate(&tree, &ctx)?;
+    crate::validate::validate(&tree, ctx)?;
     Ok(tree)
 }
 
 /// Enforce `config { min-version "X.Y.Z" }` before anything else is parsed.
 fn check_min_version(doc: &KdlDocument) -> Result<()> {
-    let required = doc
+    let node = doc
         .nodes()
         .iter()
         .find(|n| n.name().value() == "config")
@@ -189,20 +229,18 @@ fn check_min_version(doc: &KdlDocument) -> Result<()> {
                 .nodes()
                 .iter()
                 .find(|n| n.name().value() == "min-version")
-        })
-        .and_then(first_string_arg);
-    let Some(required) = required else {
+        });
+    let Some((node, required)) = node.and_then(|n| Some((n, first_string_arg(n)?))) else {
         return Ok(());
     };
 
     let current = env!("CARGO_PKG_VERSION");
     if version_parts(&required) > version_parts(current) {
-        return Err(Error::ParseNoSpan {
-            message: format!(
-                "this project requires lets >= {required}, but you have {current} \
-                 (upgrade with `cargo install lets-cli` or your package manager)"
-            ),
-        });
+        return Err(Error::at_with_help(
+            format!("this project requires lets >= {required}, but you have {current}"),
+            node.span(),
+            "upgrade with `cargo install lets-cli` or your package manager",
+        ));
     }
     Ok(())
 }
@@ -235,18 +273,18 @@ fn parse_vars_block(node: &KdlNode) -> Result<Vec<(String, VarValue)>> {
         let cmd = named_string(child, "cmd");
         let var = match (value, cmd) {
             (Some(_), Some(_)) => {
-                return Err(Error::ParseNoSpan {
-                    message: format!(
-                        "var '{name}' has both a value and cmd=; use one or the other"
-                    ),
-                });
+                return Err(Error::at(
+                    format!("var '{name}' has both a value and cmd=; use one or the other"),
+                    child.span(),
+                ));
             }
             (Some(value), None) => VarValue::Static(value),
             (None, Some(cmd)) => VarValue::command(cmd),
             (None, None) => {
-                return Err(Error::ParseNoSpan {
-                    message: format!("var '{name}' needs a value (\"…\") or a command (cmd=\"…\")"),
-                });
+                return Err(Error::at(
+                    format!("var '{name}' needs a value (\"…\") or a command (cmd=\"…\")"),
+                    child.span(),
+                ));
             }
         };
         out.push((name, var));
@@ -333,8 +371,12 @@ fn parse_explicit_command(node: &KdlNode) -> Result<CommandNode> {
 
     let name = positional
         .first()
-        .ok_or_else(|| Error::ParseNoSpan {
-            message: "cmd node requires a name as the first argument".to_string(),
+        .ok_or_else(|| {
+            Error::at_with_help(
+                "cmd node requires a name as the first argument",
+                node.span(),
+                "write it as `cmd \"name\" { … }`",
+            )
         })?
         .clone();
 
@@ -420,13 +462,14 @@ fn parse_command_body(
                 child_name
             };
             if SCALAR_NODES.contains(&scalar_key) && !seen_scalars.insert(scalar_key) {
-                return Err(Error::ParseNoSpan {
-                    message: format!(
+                return Err(Error::at(
+                    format!(
                         "duplicate '{child_name}' in '{}': only one is allowed, \
                          and a repeat would silently replace the first",
                         cmd.name
                     ),
-                });
+                    child.span(),
+                ));
             }
             match child_name {
                 "description" => {
@@ -450,17 +493,19 @@ fn parse_command_body(
                         "once" => crate::tree::RunPolicy::Once,
                         "always" => crate::tree::RunPolicy::Always,
                         other => {
-                            return Err(Error::ParseNoSpan {
-                                message: format!(
-                                    "invalid run-policy '{other}' (expected once or always)"
-                                ),
-                            });
+                            return Err(Error::at(
+                                format!("invalid run-policy '{other}' (expected once or always)"),
+                                child.span(),
+                            ));
                         }
                     };
                 }
                 "precondition" => {
-                    let cmd_str = first_string_arg(child).ok_or_else(|| Error::ParseNoSpan {
-                        message: "precondition requires a shell command argument".to_string(),
+                    let cmd_str = first_string_arg(child).ok_or_else(|| {
+                        Error::at(
+                            "precondition requires a shell command argument",
+                            child.span(),
+                        )
                     })?;
                     cmd.preconditions.push(crate::tree::Precondition {
                         cmd: cmd_str,
@@ -551,19 +596,15 @@ fn parse_command_body(
                 }
                 "timeout" => {
                     if let Some(s) = first_string_arg(child) {
-                        cmd.exec.timeout = Some(
-                            parse_duration(&s)
-                                .map_err(|msg| Error::ParseNoSpan { message: msg })?,
-                        );
+                        cmd.exec.timeout =
+                            Some(parse_duration(&s).map_err(|msg| Error::at(msg, child.span()))?);
                     }
                 }
                 "retry" => {
                     cmd.exec.retry_count = named_int(child, "count").map(|v| v as u32);
                     if let Some(s) = named_string(child, "delay") {
-                        cmd.exec.retry_delay = Some(
-                            parse_duration(&s)
-                                .map_err(|msg| Error::ParseNoSpan { message: msg })?,
-                        );
+                        cmd.exec.retry_delay =
+                            Some(parse_duration(&s).map_err(|msg| Error::at(msg, child.span()))?);
                     }
                 }
                 "silent" | "quiet" => {
@@ -574,14 +615,15 @@ fn parse_command_body(
                 }
                 other => {
                     if let Some(suggestion) = check_typo(other) {
-                        return Err(Error::ParseNoSpan {
-                            message: format!(
-                                "unknown node '{other}' in '{}': did you mean '{suggestion}'? \
-                                 (rename it, or write `cmd {other}` to define a subcommand \
-                                 with this name)",
-                                cmd.name
+                        return Err(Error::at_with_help(
+                            format!("unknown node '{other}' in '{}'", cmd.name),
+                            child.span(),
+                            format!(
+                                "did you mean '{suggestion}'? \
+                                 To define a subcommand with this name, write \
+                                 `cmd {other}` instead"
                             ),
-                        });
+                        ));
                     }
                     cmd.children.push(parse_command(child)?);
                 }

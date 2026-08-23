@@ -847,7 +847,17 @@ fn inline_cmd_plus_block_run() {
 fn parse_err(input: &str) -> String {
     match parse_source(input, &PathBuf::from("test.kdl")) {
         Ok(_) => panic!("expected parse error for:\n{input}"),
-        Err(e) => e.to_string(),
+        // Message and hint together: the fix is often the hint.
+        Err(e) => render_error(&e),
+    }
+}
+
+/// An error's message plus its help line, the way a user sees them.
+pub(crate) fn render_error(err: &crate::error::Error) -> String {
+    use miette::Diagnostic;
+    match err.help() {
+        Some(help) => format!("{err}\nhelp: {help}"),
+        None => err.to_string(),
     }
 }
 
