@@ -38,20 +38,31 @@ use std::path::PathBuf;
 use std::process;
 
 fn main() {
+    install_diagnostic_handler();
     let result = run();
     if exec::interrupted() {
         process::exit(130);
     }
     if let Err(e) = result {
-        match &e {
-            error::Error::CommandFailed { code } => process::exit(*code),
-            _ => {
-                let report: miette::Report = e.into();
-                eprintln!("{report:?}");
-                process::exit(1);
-            }
-        }
+        // A failing task keeps its own exit code so `lets test` substitutes
+        // for the command it wraps, but it still says what failed.
+        let code = e.exit_code();
+        let report: miette::Report = e.into();
+        eprintln!("{report:?}");
+        process::exit(code);
     }
+}
+
+/// Render aggregate failures as one nested tree rather than a run of
+/// separate `Error:` blocks, so several failed tasks read as one report.
+fn install_diagnostic_handler() {
+    let _ = miette::set_hook(Box::new(|_| {
+        Box::new(
+            miette::MietteHandlerOpts::new()
+                .show_related_errors_as_nested()
+                .build(),
+        )
+    }));
 }
 
 fn run() -> error::Result<()> {

@@ -102,8 +102,108 @@ fn keep_going_reports_all_step_failures() {
     assert!(stdout.contains("two-ran"), "stdout: {stdout}");
     assert!(stdout.contains("three-ran"), "stdout: {stdout}");
     assert!(stderr.contains("2 tasks failed"), "stderr: {stderr}");
-    assert!(stderr.contains("one:"), "stderr: {stderr}");
-    assert!(stderr.contains("three:"), "stderr: {stderr}");
+    assert!(stderr.contains("task 'one' failed"), "stderr: {stderr}");
+    assert!(stderr.contains("task 'three' failed"), "stderr: {stderr}");
+}
+
+#[test]
+fn single_failure_names_the_task_and_command() {
+    let (_dir, path) = with_temp_kdl("boom \"sh -c 'exit 3'\"\n");
+
+    let output = run_file(&path, &["boom"]);
+    // The failing task's exit code carries through, so `lets` substitutes
+    // for the command it wraps.
+    assert_eq!(output.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("task 'boom' failed"), "stderr: {stderr}");
+    assert!(stderr.contains("exit code 3"), "stderr: {stderr}");
+    assert!(stderr.contains("sh -c 'exit 3'"), "stderr: {stderr}");
+}
+
+#[test]
+fn nested_task_failure_names_the_full_path() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        db {
+            migrate "exit 1"
+        }
+        "#,
+    );
+
+    let output = run_file(&path, &["db", "migrate"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("task 'db migrate' failed"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn fail_fast_reports_the_steps_that_never_ran() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        one "echo one-ran"
+        two "exit 1"
+        three "echo three-ran"
+        four "echo four-ran"
+        ci {
+            steps "one" "two" "three" "four"
+        }
+        "#,
+    );
+
+    let output = run_file(&path, &["ci"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("task 'two' failed"), "stderr: {stderr}");
+    assert!(stderr.contains("did not run"), "stderr: {stderr}");
+    assert!(stderr.contains("three"), "stderr: {stderr}");
+    assert!(stderr.contains("four"), "stderr: {stderr}");
+}
+
+#[test]
+fn keep_going_reports_a_lone_failure() {
+    // A single failure used to exit silently: --keep-going promises to
+    // report every failure, including when there is only one.
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        ok "echo fine"
+        bad "exit 1"
+        ci {
+            steps "ok" "bad"
+        }
+        "#,
+    );
+
+    let output = run_file(&path, &["--keep-going", "ci"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("task 'bad' failed"), "stderr: {stderr}");
+}
+
+#[test]
+fn shared_failed_dependency_is_reported_once() {
+    // `bad` is a dep of both `a` and `b`; the second reference finds the
+    // memoized failure and must not read as an independent one.
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        bad "exit 1"
+        a { deps "bad" }
+        b { deps "bad" }
+        all {
+            deps "a" "b"
+        }
+        "#,
+    );
+
+    let output = run_file(&path, &["all"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr.matches("task 'bad' failed with exit code 1").count(),
+        1,
+        "stderr: {stderr}"
+    );
 }
 
 #[test]

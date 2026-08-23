@@ -37,7 +37,8 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, project_root: &Path) -> Res
     let force = matches.get_flag("force");
     let keep_going = matches.get_flag("keep-going");
     let summary = matches.get_flag("summary");
-    let mut ctx = ExecContext::from_node(node, &tree.config, project_root, dry_run)?;
+    let root_label = root_key.join(" ");
+    let mut ctx = ExecContext::from_node(node, &root_label, &tree.config, project_root, dry_run)?;
     ctx.env.extend(export_env(node, Some(node_matches)));
 
     install_signal_handler();
@@ -79,7 +80,6 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, project_root: &Path) -> Res
     }
     .render_task()?;
 
-    let root_label = root_key.join(" ");
     let total_start = Instant::now();
     let result = (|| -> Result<()> {
         // 1. Preconditions gate the whole task, before any work starts.
@@ -213,7 +213,14 @@ fn install_signal_handler() {
 fn run_defers(defers: &[String], ctx: &ExecContext, sink: &TaskSink) {
     for defer in defers.iter().rev() {
         if let Err(e) = exec_shell(defer, ctx, sink) {
-            eprintln!("\x1b[33mwarning:\x1b[0m defer `{defer}` failed: {e}");
+            // The defer text is already in the message; report only how it
+            // ended, not the task-shaped error wrapping it.
+            let detail = match &e {
+                Error::CommandFailed { code, .. } => format!("exit code {code}"),
+                Error::CommandSignaled { .. } => "terminated by a signal".to_string(),
+                other => other.to_string(),
+            };
+            eprintln!("\x1b[33mwarning:\x1b[0m defer `{defer}` failed ({detail})");
         }
     }
 }
@@ -352,25 +359,60 @@ fn format_duration(d: Duration) -> String {
     }
 }
 
-/// Collapse per-task results: everything passed → Ok, a single failure
-/// passes through unchanged, several failures aggregate into one report.
-fn settle(results: Vec<(String, Result<()>)>) -> Result<()> {
-    let mut failures: Vec<(String, Error)> = results
+/// Collapse per-task results into one report. A lone failure with nothing
+/// left unrun passes through untouched — it already names its task, and an
+/// aggregate wrapper would only add a layer. Anything else aggregates, so
+/// the user sees every failure and everything skipped in one place.
+fn settle(results: Vec<(String, Result<()>)>, skipped: &[String]) -> Result<()> {
+    let mut failures: Vec<Error> = results
         .into_iter()
-        .filter_map(|(label, r)| r.err().map(|e| (label, e)))
+        .filter_map(|(label, r)| r.err().map(|e| attribute(&label, e)))
         .collect();
-    match failures.len() {
-        0 => Ok(()),
-        1 => Err(failures.remove(0).1),
-        n => Err(Error::Other(format!(
-            "{n} tasks failed:\n{}",
-            failures
-                .iter()
-                .map(|(label, e)| format!("  {label}: {e}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ))),
+
+    // A shared dependency that failed once is reported once: drop the
+    // "failed earlier" markers its other referrers produced.
+    let reported: HashSet<String> = failures
+        .iter()
+        .filter_map(|e| match e {
+            Error::CommandFailed { task, .. } | Error::CommandSignaled { task, .. } => {
+                Some(task.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    failures.retain(|e| !matches!(e, Error::DependencyFailed { task } if reported.contains(task)));
+
+    if failures.is_empty() {
+        return Ok(());
     }
+    if failures.len() == 1 && skipped.is_empty() {
+        return Err(failures.remove(0));
+    }
+    Err(Error::TasksFailed {
+        count: failures.len(),
+        failures,
+        skipped: skipped_note(skipped),
+    })
+}
+
+/// Name the task on errors that don't already identify themselves (env-file
+/// trouble, interpolation failures), so every failure in an aggregate
+/// report says where it came from.
+fn attribute(label: &str, err: Error) -> Error {
+    if err.names_task() {
+        err
+    } else {
+        Error::Other(format!("task '{label}': {err}"))
+    }
+}
+
+/// Steps after a fail-fast failure never ran; say so rather than leaving
+/// the user to infer it from missing output.
+fn skipped_note(skipped: &[String]) -> Option<String> {
+    if skipped.is_empty() {
+        return None;
+    }
+    Some(format!("did not run: {}", skipped.join(", ")))
 }
 
 /// Minimal counting semaphore. Permits wrap only a task's command phase —
@@ -480,7 +522,9 @@ impl Orchestrator<'_> {
         }
         match self.registry.claim(key) {
             Claim::Done => Ok(()),
-            Claim::Failed => Err(Error::Other(format!("task '{}' failed", key.join(" ")))),
+            Claim::Failed => Err(Error::DependencyFailed {
+                task: key.join(" "),
+            }),
             Claim::Run => {
                 let mut guard = ClaimGuard {
                     registry: &self.registry,
@@ -531,7 +575,7 @@ impl Orchestrator<'_> {
                 .collect()
         });
 
-        settle(results)
+        settle(results, &[])
     }
 
     /// Run all steps sequentially. Fails on the first error unless
@@ -539,7 +583,8 @@ impl Orchestrator<'_> {
     /// failure at once.
     fn run_steps(&self, node: &CommandNode) -> Result<()> {
         let mut results = Vec::new();
-        for task_ref in &node.orch.steps {
+        let mut skipped = Vec::new();
+        for (i, task_ref) in node.orch.steps.iter().enumerate() {
             let (step_node, args) = self
                 .tree
                 .resolve_ref(task_ref)
@@ -549,10 +594,14 @@ impl Orchestrator<'_> {
             let failed = result.is_err();
             results.push((task_ref.display(), result));
             if failed && !self.keep_going {
+                skipped = node.orch.steps[i + 1..]
+                    .iter()
+                    .map(|r| r.display())
+                    .collect();
                 break;
             }
         }
-        settle(results)
+        settle(results, &skipped)
     }
 
     /// Append one row to the --summary table.
@@ -605,8 +654,14 @@ impl Orchestrator<'_> {
             Some(parsed)
         };
 
-        let mut ctx =
-            ExecContext::from_node(node, &self.tree.config, &self.project_root, self.dry_run)?;
+        let label = key.join(" ");
+        let mut ctx = ExecContext::from_node(
+            node,
+            &label,
+            &self.tree.config,
+            &self.project_root,
+            self.dry_run,
+        )?;
         ctx.env.extend(export_env(node, matches.as_ref()));
 
         // Every template renders up front, before any of the task's work.
@@ -630,7 +685,6 @@ impl Orchestrator<'_> {
         self.run_steps(node)?;
 
         // Status checks may have been satisfied by deps, so they run after.
-        let label = key.join(" ");
         if is_up_to_date(&rendered.status, &ctx, self.dry_run, self.force)? {
             report_up_to_date(&label);
             self.record(&label, Outcome::UpToDate, Duration::ZERO);

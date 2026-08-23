@@ -23,6 +23,8 @@ use crate::tree::{CommandNode, Config, VarValue};
 
 /// Execution context derived from a CommandNode's settings.
 pub(crate) struct ExecContext {
+    /// Task label as the user wrote it (`db migrate`), for failure reports.
+    pub label: String,
     pub env: Vec<(String, String)>,
     /// Working directory for child processes: the config-file directory,
     /// or `dir` resolved against it.
@@ -39,6 +41,7 @@ pub(crate) struct ExecContext {
 impl ExecContext {
     pub fn from_node(
         node: &CommandNode,
+        label: &str,
         config: &Config,
         project_root: &Path,
         dry_run: bool,
@@ -84,6 +87,7 @@ impl ExecContext {
         }
 
         Ok(ExecContext {
+            label: label.to_string(),
             env,
             dir,
             shell: node.exec.shell.clone().or_else(|| config.shell.clone()),
@@ -269,19 +273,19 @@ fn exec_shell_once(command: &str, ctx: &ExecContext, sink: &TaskSink) -> Result<
     }
 
     if sink.captures() {
-        exec_captured(cmd, ctx, sink)
+        exec_captured(cmd, command, ctx, sink)
     } else {
-        exec_inherited(cmd, ctx)
+        exec_inherited(cmd, command, ctx)
     }
 }
 
 /// Run with inherited stdio (interleaved output).
-fn exec_inherited(mut cmd: process::Command, ctx: &ExecContext) -> Result<()> {
+fn exec_inherited(mut cmd: process::Command, command: &str, ctx: &ExecContext) -> Result<()> {
     let Some(timeout) = ctx.timeout else {
         let status = cmd
             .status()
             .map_err(|e| Error::Other(format!("failed to spawn shell: {e}")))?;
-        return check_status(status);
+        return check_status(status, command, ctx);
     };
 
     let mut child = cmd
@@ -299,18 +303,23 @@ fn exec_inherited(mut cmd: process::Command, ctx: &ExecContext) -> Result<()> {
     });
 
     match rx.recv_timeout(timeout) {
-        Ok(Ok(status)) => check_status(status),
+        Ok(Ok(status)) => check_status(status, command, ctx),
         Ok(Err(e)) => Err(Error::Other(format!("failed to wait on command: {e}"))),
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
             kill_process_group(pid);
-            Err(Error::Other(format!("command timed out after {timeout:?}")))
+            Err(timed_out_error(ctx, timeout))
         }
         Err(e) => Err(Error::Other(format!("wait channel error: {e}"))),
     }
 }
 
 /// Run with stdout+stderr merged into one pipe, drained through the sink.
-fn exec_captured(mut cmd: process::Command, ctx: &ExecContext, sink: &TaskSink) -> Result<()> {
+fn exec_captured(
+    mut cmd: process::Command,
+    command: &str,
+    ctx: &ExecContext,
+    sink: &TaskSink,
+) -> Result<()> {
     let (reader, writer) =
         std::io::pipe().map_err(|e| Error::Other(format!("failed to create output pipe: {e}")))?;
     let writer_clone = writer
@@ -352,12 +361,11 @@ fn exec_captured(mut cmd: process::Command, ctx: &ExecContext, sink: &TaskSink) 
     if let Some((cancel_tx, timed_out)) = watchdog {
         let _ = cancel_tx.send(());
         if timed_out.load(Ordering::SeqCst) {
-            let timeout = ctx.timeout.unwrap_or_default();
-            return Err(Error::Other(format!("command timed out after {timeout:?}")));
+            return Err(timed_out_error(ctx, ctx.timeout.unwrap_or_default()));
         }
     }
 
-    check_status(status)
+    check_status(status, command, ctx)
 }
 
 fn kill_process_group(pid: u32) {
@@ -413,14 +421,40 @@ pub(crate) fn terminate_process_groups() {
     }
 }
 
-fn check_status(status: process::ExitStatus) -> Result<()> {
-    if status.success() {
-        Ok(())
+fn timed_out_error(ctx: &ExecContext, timeout: Duration) -> Error {
+    Error::Other(format!(
+        "task '{}' timed out after {}",
+        ctx.label,
+        format_timeout(timeout)
+    ))
+}
+
+/// Timeouts are declared as `30s` / `2m`; echo them back the same way
+/// instead of Rust's `Duration` debug form.
+fn format_timeout(d: Duration) -> String {
+    let secs = d.as_secs();
+    if secs >= 60 && secs.is_multiple_of(60) {
+        format!("{}m", secs / 60)
+    } else if d.subsec_millis() == 0 {
+        format!("{secs}s")
     } else {
-        match status.code() {
-            Some(code) => Err(Error::CommandFailed { code }),
-            None => Err(Error::CommandSignaled),
-        }
+        format!("{:.1}s", d.as_secs_f64())
+    }
+}
+
+fn check_status(status: process::ExitStatus, command: &str, ctx: &ExecContext) -> Result<()> {
+    if status.success() {
+        return Ok(());
+    }
+    let task = ctx.label.clone();
+    let command = command.to_string();
+    match status.code() {
+        Some(code) => Err(Error::CommandFailed {
+            task,
+            command,
+            code,
+        }),
+        None => Err(Error::CommandSignaled { task, command }),
     }
 }
 
