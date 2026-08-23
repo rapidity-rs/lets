@@ -148,6 +148,34 @@ db {
 
 Here `lets db` opens a psql shell, while `lets db migrate` runs migrations.
 
+## Seeing what's there
+
+`lets --help` lists top-level commands; `lets --list` shows the whole tree,
+with each command's signature and aliases:
+
+```
+$ lets --list
+My project tasks
+
+├── deploy <dev|staging|prod>  Deploy to an environment
+├── greet [name]               Say hello
+├── db                         Database commands
+│   ├── migrate                Run pending migrations
+│   └── reset                  Drop and recreate
+└── test [files...]            Run the suite (alias: t)
+```
+
+The signature mirrors how each argument is declared — `<required>`,
+`[optional]`, `[rest...]` — and a short `choices` list is shown inline.
+Groups that only hold subcommands (`db` above) are styled apart from
+commands you can run directly.
+
+Flags aren't shown here; `lets <cmd> --help` covers those, and lists the
+command's own options separately from lets' built-in ones.
+
+On a terminal, descriptions are trimmed to fit the width. Redirected output
+is never trimmed, so `lets --list | grep deploy` sees the full text.
+
 ## Aliases
 
 Give commands shorter alternative names:

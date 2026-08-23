@@ -490,13 +490,36 @@ Add help text to one-liners without block syntax:
 build "cargo build" description="Build the project"
 ```
 
+### Listing commands
+
+`lets --list` shows the whole tree — including subcommands, which root help
+only summarizes — with each command's signature and aliases:
+
+```
+$ lets --list
+Arguments & flags — typed, validated, interpolated
+
+├── deploy <dev|staging|prod>  Deploy to an environment
+├── greet [name]               Say hello
+├── build                      Compile everything (alias: b)
+└── test [files...]            Run tests
+```
+
+`<required>`, `[optional]`, and `[rest...]` mirror how the argument is
+declared; a short list of `choices` is shown inline. Flags are left to
+`lets <cmd> --help`, which also groups lets' own flags separately from the
+command's.
+
+Descriptions are trimmed to fit a terminal, but never when the output is
+redirected — piping the listing keeps every character.
+
 ## Built-in commands
 
 | Command | Description |
 |---|---|
 | `lets --help` | Show help with all commands |
 | `lets` | With no arguments on a terminal: fuzzy-pick a command to run |
-| `lets --list` | Show all commands in a tree |
+| `lets --list` | Show every command as a tree, with signatures and aliases |
 | `lets --list --json` | Machine-readable command tree for tooling |
 | `lets --dry-run <cmd>` | Show what would run |
 | `lets --verbose <cmd>` | Echo each command before it runs |
