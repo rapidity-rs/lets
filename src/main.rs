@@ -107,8 +107,15 @@ fn run() -> error::Result<()> {
             let tree = parse::parse_file(&path)?;
             (tree, Some(path))
         }
-        Err(error::Error::ConfigNotFound { .. }) => {
-            // No config — build an empty tree so self commands still work.
+        Err(e @ error::Error::ConfigNotFound { .. }) => {
+            // Anything that names a command needs a config. Letting clap
+            // parse first would report `unrecognized subcommand 'build'`
+            // and bury the real problem: there is no lets.kdl here.
+            if !is_help_only_invocation() {
+                return Err(e);
+            }
+            // Bare `lets` still shows help, so a first-time user sees what
+            // the tool offers alongside the hint.
             let empty = tree::CommandTree {
                 description: None,
                 config: tree::Config::default(),
@@ -142,9 +149,6 @@ fn run() -> error::Result<()> {
 
     // Built-in flags.
     if matches.get_flag("list") {
-        if !config_found {
-            return handle_no_config();
-        }
         if matches.get_flag("json") {
             commands::print_command_list_json(&tree);
         } else {
@@ -155,10 +159,6 @@ fn run() -> error::Result<()> {
 
     // Handle `lets self <subcommand>`.
     if let Some(("self", self_matches)) = matches.subcommand() {
-        // check and completions require a config file.
-        if !config_found && let Some(("check" | "completions", _)) = self_matches.subcommand() {
-            return handle_no_config();
-        }
         return handle_self(&tree, &mut clap_cmd, self_matches);
     }
 
@@ -297,6 +297,16 @@ fn is_self_init() -> bool {
     positional.first() == Some(&"self") && positional.get(1) == Some(&"init")
 }
 
+/// Whether the invocation can be served without a config: a bare `lets`,
+/// or one asking only for help or the version.
+fn is_help_only_invocation() -> bool {
+    let mut args = std::env::args().skip(1).peekable();
+    if args.peek().is_none() {
+        return true;
+    }
+    args.any(|a| matches!(a.as_str(), "-h" | "--help" | "-V" | "--version"))
+}
+
 /// Check if the user is running `lets self setup`.
 fn is_self_setup() -> bool {
     let args: Vec<String> = std::env::args().collect();
@@ -306,13 +316,6 @@ fn is_self_setup() -> bool {
         .map(|s| s.as_str())
         .collect();
     positional.first() == Some(&"self") && positional.get(1) == Some(&"setup")
-}
-
-/// Handle commands that require a lets.kdl when none is found.
-fn handle_no_config() -> error::Result<()> {
-    Err(error::Error::Other(
-        "No lets.kdl found. Run `lets self init` to create one.".to_string(),
-    ))
 }
 
 fn resolve_config_path() -> error::Result<PathBuf> {

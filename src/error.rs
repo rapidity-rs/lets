@@ -10,7 +10,8 @@ use miette::SourceSpan;
 /// All error types produced by lets.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 pub enum Error {
-    #[error("no lets.kdl found (searched from {start_dir} to filesystem root)")]
+    #[error("no lets.kdl found in {} or any parent directory", start_dir.display())]
+    #[diagnostic(help("run `lets self init` to create one"))]
     ConfigNotFound { start_dir: PathBuf },
 
     /// A config-file problem with source to point at. Boxed because it

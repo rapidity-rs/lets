@@ -60,3 +60,58 @@ fn trailing_brace_points_at_the_brace() {
 
     assert!(stderr.contains("lets.kdl:2:1"), "stderr: {stderr}");
 }
+
+/// With no lets.kdl, clap used to report `unrecognized subcommand 'build'` —
+/// technically true, but it hides the actual problem.
+#[test]
+fn missing_config_is_reported_instead_of_an_unknown_subcommand() {
+    let dir = tempfile::tempdir().unwrap();
+
+    for args in [
+        vec!["build"],
+        vec!["--list"],
+        vec!["self", "check"],
+        vec!["db", "migrate"],
+    ] {
+        let output = lets_bin()
+            .current_dir(dir.path())
+            .args(&args)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(!output.status.success(), "{args:?} should fail");
+        assert!(
+            stderr.contains("no lets.kdl found"),
+            "{args:?} stderr: {stderr}"
+        );
+        assert!(
+            stderr.contains("lets self init"),
+            "{args:?} stderr: {stderr}"
+        );
+        assert!(
+            !stderr.contains("unrecognized subcommand"),
+            "{args:?} stderr: {stderr}"
+        );
+    }
+}
+
+/// Asking for help or the version needs no config, and `lets self init` has
+/// to work in exactly the directory that has none.
+#[test]
+fn help_version_and_init_still_work_without_a_config() {
+    let dir = tempfile::tempdir().unwrap();
+
+    for args in [vec!["--help"], vec!["--version"], vec!["self", "init"]] {
+        let output = lets_bin()
+            .current_dir(dir.path())
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
