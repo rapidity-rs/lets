@@ -6,6 +6,64 @@ description: Breaking changes between lets releases and how to migrate.
 Pin the version a config requires with `config { min-version "X.Y.Z" }` —
 older binaries then fail with an upgrade hint instead of a confusing error.
 
+## 0.4 → 0.5
+
+0.5 is a UX release: better diagnostics, one colour decision, a rebuilt
+picker. One config change is breaking; the rest matter only if you parse
+lets' output.
+
+### `flag color` is reserved
+
+`--color auto|always|never` is now a built-in global flag, so a command
+declaring its own `color` flag would silently shadow it. Like the other
+built-ins, the name is now rejected at load:
+
+```kdl
+// before
+build {
+    flag color                       // quietly won over --color
+    run "cargo build {?color:--color=always}"
+}
+
+// after — pick another name
+build {
+    flag colour
+    run "cargo build {?colour:--color=always}"
+}
+```
+
+`lets self check` reports the line if you have one.
+
+### `--dry-run` output is a plan, not a list
+
+Dry runs used to print one `[dry-run] <command>` line per command. They now
+group commands under the task they belong to and name the phase each runs
+in, and walk `deps` in declaration order rather than in parallel:
+
+```
+lint
+  run          cargo clippy
+
+deploy
+  before       echo Starting deploy...
+  run          scripts/deploy.sh
+```
+
+Anything grepping for the `[dry-run]` prefix needs updating. `--list --json`
+is still the stable interface for tooling.
+
+### `--summary` footer wording
+
+The table's last line is now `3 tasks in 1.5s elapsed` rather than
+`total: 1.5s`, making clear that it is wall clock and not the sum of the
+rows above it.
+
+### Escape leaves the picker
+
+Backing out of the bare-`lets` picker returns you to the prompt. It used to
+print full help, which is still what you get when there is nothing to pick
+or when output is redirected.
+
 ## 0.3 → 0.4
 
 0.4 hardens the config language. Everything below fails loudly at load time,
