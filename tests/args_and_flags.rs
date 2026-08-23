@@ -546,3 +546,55 @@ fn rest_arg_via_deps_reference() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("[one]\n[two]"), "stdout: {stdout}");
 }
+
+/// Built-in flags apply to a run, so they have to work where a user
+/// naturally types them — after the command name, not only before it.
+#[test]
+fn built_in_flags_work_after_the_command_name() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        lint "echo linting"
+        ci {
+            steps "lint"
+            run "echo done"
+        }
+        "#,
+    );
+
+    for flag in [
+        "--verbose",
+        "--keep-going",
+        "--summary",
+        "--dry-run",
+        "--force",
+    ] {
+        let before = lets_bin()
+            .args(["--file", path.to_str().unwrap(), flag, "ci"])
+            .output()
+            .unwrap();
+        let after = lets_bin()
+            .args(["--file", path.to_str().unwrap(), "ci", flag])
+            .output()
+            .unwrap();
+
+        assert!(before.status.success(), "{flag} before the command failed");
+        assert!(
+            after.status.success(),
+            "{flag} after the command failed: {}",
+            String::from_utf8_lossy(&after.stderr)
+        );
+    }
+}
+
+/// The flag has to take effect from either position, not merely parse.
+#[test]
+fn a_trailing_built_in_flag_takes_effect() {
+    let (_dir, path) = with_temp_kdl("ci \"echo done\"\n");
+
+    let output = lets_bin()
+        .args(["--file", path.to_str().unwrap(), "ci", "--summary"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("total:"), "stderr: {stderr}");
+}

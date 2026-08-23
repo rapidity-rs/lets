@@ -25,6 +25,17 @@ const STYLES: Styles = Styles::styled()
     .invalid(AnsiColor::Yellow.on_default())
     .error(AnsiColor::Red.on_default().bold());
 
+/// Heading that separates lets' own flags from the ones a command
+/// declares. Without it a command's single `--release` sits buried among a
+/// dozen built-ins.
+const GLOBAL_HEADING: &str = "Global options";
+
+/// Mark a built-in flag: usable at any level, and grouped away from the
+/// command's own options in help.
+fn global(arg: clap::Arg) -> clap::Arg {
+    arg.global(true).help_heading(GLOBAL_HEADING)
+}
+
 /// Leak a String to get a `&'static str`.
 /// This is fine — we build the CLI once and it lives for the process lifetime.
 fn leak(s: &str) -> &'static str {
@@ -86,29 +97,26 @@ pub fn build_cli(tree: &CommandTree) -> Command {
             style::ColorChoice::Always => clap::ColorChoice::Always,
             style::ColorChoice::Never => clap::ColorChoice::Never,
         })
-        .arg(
+        .arg(global(
             clap::Arg::new("file")
                 .long("file")
                 .short('f')
-                .help("Path to lets.kdl file")
-                .global(true),
-        )
-        .arg(
+                .help("Path to lets.kdl file"),
+        ))
+        .arg(global(
             clap::Arg::new("yes")
                 .long("yes")
                 .short('y')
                 .help("Skip all confirmation prompts")
-                .action(clap::ArgAction::SetTrue)
-                .global(true),
-        )
-        .arg(
+                .action(clap::ArgAction::SetTrue),
+        ))
+        .arg(global(
             clap::Arg::new("dry-run")
                 .long("dry-run")
                 .help("Show what would be executed without running it")
-                .action(clap::ArgAction::SetTrue)
-                .global(true),
-        )
-        .arg(
+                .action(clap::ArgAction::SetTrue),
+        ))
+        .arg(global(
             clap::Arg::new("output")
                 .long("output")
                 .help("Output mode for tasks run via deps/steps")
@@ -116,40 +124,35 @@ pub fn build_cli(tree: &CommandTree) -> Command {
                     "interleaved",
                     "group",
                     "prefixed",
-                ]))
-                .global(true),
-        )
-        .arg(
+                ])),
+        ))
+        .arg(global(
             clap::Arg::new("watch")
                 .long("watch")
                 .help("Re-run the command when files in its sources change")
-                .action(clap::ArgAction::SetTrue)
-                .global(true),
-        )
-        .arg(
+                .action(clap::ArgAction::SetTrue),
+        ))
+        .arg(global(
             clap::Arg::new("force")
                 .long("force")
                 .help("Run tasks even if their status checks report up to date")
-                .action(clap::ArgAction::SetTrue)
-                .global(true),
-        )
-        .arg(
+                .action(clap::ArgAction::SetTrue),
+        ))
+        .arg(global(
             clap::Arg::new("jobs")
                 .long("jobs")
                 .help("Maximum number of tasks running concurrently")
-                .value_parser(clap::value_parser!(u64).range(1..))
-                .global(true),
-        )
-        .arg(
+                .value_parser(clap::value_parser!(u64).range(1..)),
+        ))
+        .arg(global(
             clap::Arg::new("color")
                 .long("color")
                 .value_name("when")
                 .help("When to use colored output")
                 .value_parser(clap::builder::PossibleValuesParser::new([
                     "auto", "always", "never",
-                ]))
-                .global(true),
-        )
+                ])),
+        ))
         .arg(
             clap::Arg::new("list")
                 .long("list")
@@ -163,24 +166,24 @@ pub fn build_cli(tree: &CommandTree) -> Command {
                 .action(clap::ArgAction::SetTrue)
                 .requires("list"),
         )
-        .arg(
+        .arg(global(
             clap::Arg::new("verbose")
                 .long("verbose")
                 .help("Echo each command before it runs")
                 .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
+        ))
+        .arg(global(
             clap::Arg::new("keep-going")
                 .long("keep-going")
                 .help("Continue independent tasks after a failure and report all failures")
                 .action(clap::ArgAction::SetTrue),
-        )
-        .arg(
+        ))
+        .arg(global(
             clap::Arg::new("summary")
                 .long("summary")
                 .help("Print a per-task status and timing table after the run")
                 .action(clap::ArgAction::SetTrue),
-        )
+        ))
         .subcommand(build_self_command())
         .subcommand_required(false)
         .disable_help_subcommand(true);
