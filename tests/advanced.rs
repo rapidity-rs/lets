@@ -20,7 +20,12 @@ fn dry_run_shows_command() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("[dry-run] scripts/deploy.sh"));
+    // The plan groups commands under the task they belong to.
+    assert!(stdout.contains("deploy"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("run          scripts/deploy.sh"),
+        "stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -44,10 +49,19 @@ fn dry_run_with_steps_and_hooks() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("[dry-run] echo lint"));
-    assert!(stdout.contains("[dry-run] echo before"));
-    assert!(stdout.contains("[dry-run] scripts/deploy.sh"));
-    assert!(stdout.contains("[dry-run] echo after"));
+    for expected in [
+        "run          echo lint",
+        "before       echo before",
+        "run          scripts/deploy.sh",
+        "after        echo after",
+    ] {
+        assert!(stdout.contains(expected), "missing {expected:?}: {stdout}");
+    }
+    // Each task announces itself once, and the step precedes the task that
+    // depends on it.
+    let lint = stdout.find("echo lint").unwrap();
+    let before = stdout.find("echo before").unwrap();
+    assert!(lint < before, "stdout: {stdout}");
 }
 
 #[test]

@@ -21,6 +21,7 @@ use crate::error::{Error, Result};
 use crate::fingerprint;
 use crate::interpolate::{self, Placeholder, Resolution};
 use crate::output::{OutputMode, TaskSink};
+use crate::plan::{self, Phase};
 use crate::shell::{self, ExecContext, exec_shell};
 use crate::tree::{CommandNode, CommandTree, FlagType, RunPolicy};
 
@@ -83,7 +84,7 @@ pub fn run(tree: &CommandTree, matches: &ArgMatches, project_root: &Path) -> Res
     let total_start = Instant::now();
     let result = (|| -> Result<()> {
         // 1. Preconditions gate the whole task, before any work starts.
-        check_preconditions(&rendered.preconditions, &node.name, &ctx, dry_run)?;
+        check_preconditions(&rendered.preconditions, &ctx, dry_run)?;
 
         // 2. Parallel deps (run-once).
         orch.run_deps(node)?;
@@ -145,9 +146,13 @@ fn check_freshness(
         return Ok(fingerprint::Freshness::NoInputs);
     }
     if dry_run {
-        println!(
-            "[dry-run] fingerprint: {} source pattern(s)",
-            node.sources.len()
+        plan::skipped(
+            &key.join(" "),
+            Phase::Sources,
+            &format!(
+                "{} pattern(s) checked; runs when they change",
+                node.sources.len()
+            ),
         );
         return Ok(fingerprint::Freshness::NoInputs);
     }
@@ -218,7 +223,7 @@ fn install_signal_handler() {
 /// Defer failures warn but never change the task's result.
 fn run_defers(defers: &[String], ctx: &ExecContext, sink: &TaskSink) {
     for defer in defers.iter().rev() {
-        if let Err(e) = exec_shell(defer, ctx, sink) {
+        if let Err(e) = exec_shell(defer, Phase::Defer, ctx, sink) {
             // The defer text is already in the message; report only how it
             // ended, not the task-shaped error wrapping it.
             let detail = match &e {
@@ -234,19 +239,19 @@ fn run_defers(defers: &[String], ctx: &ExecContext, sink: &TaskSink) {
 /// Fail fast when any precondition exits non-zero. Dry-run only previews.
 fn check_preconditions(
     preconditions: &[(String, Option<String>)],
-    task: &str,
     ctx: &ExecContext,
     dry_run: bool,
 ) -> Result<()> {
     for (cmd, message) in preconditions {
         if dry_run {
-            println!("[dry-run] precondition: {cmd}");
+            plan::step(&ctx.label, Phase::Precondition, cmd);
             continue;
         }
         if !shell::check_shell(cmd, ctx)? {
             let detail = message.clone().unwrap_or_else(|| format!("`{cmd}` failed"));
             return Err(Error::Other(format!(
-                "precondition not met for '{task}': {detail}"
+                "precondition not met for '{}': {detail}",
+                ctx.label
             )));
         }
     }
@@ -295,7 +300,7 @@ fn is_up_to_date(status: &[String], ctx: &ExecContext, dry_run: bool, force: boo
     }
     if dry_run {
         for check in status {
-            println!("[dry-run] status: {check}");
+            plan::step(&ctx.label, Phase::Status, check);
         }
         return Ok(false);
     }
@@ -557,6 +562,31 @@ impl Orchestrator<'_> {
             return Ok(());
         }
 
+        // A dry run narrates rather than executes, so it walks deps in
+        // declaration order: a preview whose order depends on thread
+        // scheduling isn't one you can read or diff.
+        if self.dry_run {
+            let results = node
+                .orch
+                .deps
+                .iter()
+                .map(|task_ref| {
+                    let result = self
+                        .tree
+                        .resolve_ref(task_ref)
+                        .ok_or_else(|| {
+                            Error::Other(format!("dep '{}' not found", task_ref.display()))
+                        })
+                        .and_then(|(dep_node, args)| {
+                            let key = canonical_key(dep_node, &task_ref.tokens, args);
+                            self.run_task(&key, dep_node, args)
+                        });
+                    (task_ref.display(), result)
+                })
+                .collect();
+            return settle(results, &[]);
+        }
+
         let results: Vec<(String, Result<()>)> = std::thread::scope(|s| {
             let handles: Vec<_> = node
                 .orch
@@ -630,26 +660,60 @@ impl Orchestrator<'_> {
         if rows.is_empty() {
             return;
         }
-        let width = rows.iter().map(|r| r.label.len()).max().unwrap_or(0);
+
+        let cells: Vec<(String, &str, String)> = rows
+            .iter()
+            .map(|row| {
+                let (mark, note) = match row.outcome {
+                    Outcome::Success => (
+                        crate::style::err(crate::style::SUCCESS, "✓"),
+                        format_duration(row.duration),
+                    ),
+                    Outcome::Failed => (
+                        crate::style::err(crate::style::FAILURE, "✗"),
+                        format_duration(row.duration),
+                    ),
+                    Outcome::UpToDate => (
+                        crate::style::err(crate::style::DIM, "-"),
+                        "up to date".to_string(),
+                    ),
+                };
+                (mark, row.label.as_str(), note)
+            })
+            .collect();
+
+        // Character counts, not byte lengths: a task named in anything but
+        // ASCII would otherwise pull its column out of true.
+        let label_width = cells
+            .iter()
+            .map(|(_, label, _)| label.chars().count())
+            .max()
+            .unwrap_or(0);
+        let note_width = cells
+            .iter()
+            .map(|(_, _, note)| note.chars().count())
+            .max()
+            .unwrap_or(0);
+
         eprintln!();
-        for row in rows.iter() {
-            let (mark, note) = match row.outcome {
-                Outcome::Success => (
-                    crate::style::err(crate::style::SUCCESS, "✓"),
-                    format_duration(row.duration),
-                ),
-                Outcome::Failed => (
-                    crate::style::err(crate::style::FAILURE, "✗"),
-                    format_duration(row.duration),
-                ),
-                Outcome::UpToDate => (
-                    crate::style::err(crate::style::DIM, "-"),
-                    "up to date".to_string(),
-                ),
-            };
-            eprintln!("  {mark} {label:<width$}  {note}", label = row.label);
+        for (mark, label, note) in &cells {
+            // Durations right-align so they can be compared down the column.
+            eprintln!("  {mark} {label:<label_width$}  {note:>note_width$}");
         }
-        eprintln!("  total: {}", format_duration(total));
+        // Tasks run in parallel, so the total is wall clock and is usually
+        // less than the sum of the rows above it. Say which it is.
+        eprintln!(
+            "  {}",
+            crate::style::err(
+                crate::style::DIM,
+                format!(
+                    "{} task{} in {} elapsed",
+                    cells.len(),
+                    if cells.len() == 1 { "" } else { "s" },
+                    format_duration(total)
+                )
+            )
+        );
     }
 
     /// Execute a command node invoked via deps/steps.
@@ -698,7 +762,7 @@ impl Orchestrator<'_> {
         .render_task()?;
 
         // Preconditions gate the task before any of its work starts.
-        check_preconditions(&rendered.preconditions, &node.name, &ctx, self.dry_run)?;
+        check_preconditions(&rendered.preconditions, &ctx, self.dry_run)?;
 
         // Nested deps and steps run first; they present through their own sinks.
         self.run_deps(node)?;
@@ -746,13 +810,13 @@ impl Orchestrator<'_> {
 /// Hooks and run commands of a single rendered task, routed through its sink.
 fn exec_task_commands(rendered: &RenderedTask, ctx: &ExecContext, sink: &TaskSink) -> Result<()> {
     if let Some(before) = &rendered.before {
-        exec_shell(before, ctx, sink)?;
+        exec_shell(before, Phase::Before, ctx, sink)?;
     }
     for command in &rendered.run {
-        exec_shell(command, ctx, sink)?;
+        exec_shell(command, Phase::Run, ctx, sink)?;
     }
     if let Some(after) = &rendered.after {
-        exec_shell(after, ctx, sink)?;
+        exec_shell(after, Phase::After, ctx, sink)?;
     }
     Ok(())
 }

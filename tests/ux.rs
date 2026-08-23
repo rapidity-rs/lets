@@ -246,11 +246,14 @@ fn summary_lists_tasks_with_status() {
     assert!(stderr.contains("lint"), "stderr: {stderr}");
     assert!(stderr.contains("test"), "stderr: {stderr}");
     assert!(stderr.contains("ci"), "stderr: {stderr}");
-    assert!(stderr.contains("total:"), "stderr: {stderr}");
+    // The footer says the total is wall clock, which under parallel deps
+    // is less than the sum of the rows above it.
+    assert!(stderr.contains("3 tasks in"), "stderr: {stderr}");
+    assert!(stderr.contains("elapsed"), "stderr: {stderr}");
 
     // Without the flag, no table.
     let output = run_file(&path, &["ci"]);
-    assert!(!String::from_utf8_lossy(&output.stderr).contains("total:"));
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("elapsed"));
 }
 
 #[test]
@@ -308,4 +311,141 @@ fn group_mode_emits_ci_fold_markers_on_github_actions() {
         .output()
         .unwrap();
     assert!(!String::from_utf8_lossy(&output.stdout).contains("::group::"));
+}
+
+/// A dry run is a plan, not a flat list of shell strings: each command is
+/// grouped under the task it belongs to and tagged with its phase.
+#[test]
+fn dry_run_groups_commands_by_task_and_phase() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        lint "echo linting"
+        db {
+            migrate "echo migrating"
+        }
+        deploy {
+            precondition "test -f .env"
+            deps "lint"
+            steps "db migrate"
+            defer "echo cleanup"
+            before "echo starting"
+            run "echo shipping"
+            after "echo done"
+        }
+        "#,
+    );
+
+    let output = run_file(&path, &["--dry-run", "deploy"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Every task announces itself, nested ones by their full path.
+    for task in ["lint", "db migrate", "deploy"] {
+        assert!(
+            stdout.lines().any(|l| l == task),
+            "no header for {task:?}: {stdout}"
+        );
+    }
+    for phase in [
+        "precondition test -f .env",
+        "run          echo linting",
+        "run          echo migrating",
+        "before       echo starting",
+        "run          echo shipping",
+        "after        echo done",
+        "defer        echo cleanup",
+    ] {
+        assert!(stdout.contains(phase), "missing {phase:?}: {stdout}");
+    }
+}
+
+/// Deps execute in parallel, but a preview you can't read twice the same
+/// way is not a preview. Dry runs walk them in declaration order.
+#[test]
+fn dry_run_order_is_stable() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        alpha "echo alpha"
+        beta "echo beta"
+        gamma "echo gamma"
+        all { deps "alpha" "beta" "gamma" }
+        "#,
+    );
+
+    let first = run_file(&path, &["--dry-run", "all"]);
+    let stdout = String::from_utf8_lossy(&first.stdout).to_string();
+
+    let order: Vec<usize> = ["alpha", "beta", "gamma"]
+        .iter()
+        .map(|name| stdout.find(&format!("echo {name}")).unwrap())
+        .collect();
+    assert!(order[0] < order[1] && order[1] < order[2], "{stdout}");
+
+    for _ in 0..5 {
+        let again = run_file(&path, &["--dry-run", "all"]);
+        assert_eq!(String::from_utf8_lossy(&again.stdout), stdout);
+    }
+}
+
+/// Echoed commands from parallel tasks share one unlabelled stream in the
+/// default output mode, so they have to say which task they came from.
+#[test]
+fn verbose_labels_echoes_from_dependencies() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        lint "echo linting"
+        ci {
+            deps "lint"
+            run "echo done"
+        }
+        "#,
+    );
+
+    let stdout = String::from_utf8_lossy(&run_file(&path, &["--verbose", "ci"]).stdout).to_string();
+    assert!(stdout.contains("[lint] $ echo linting"), "stdout: {stdout}");
+    // The invoked task needs no label; there is nothing to tell it from.
+    assert!(stdout.contains("\n$ echo done"), "stdout: {stdout}");
+}
+
+#[test]
+fn verbose_on_a_lone_task_adds_no_label() {
+    let (_dir, path) = with_temp_kdl("lint \"echo linting\"\n");
+
+    let stdout =
+        String::from_utf8_lossy(&run_file(&path, &["--verbose", "lint"]).stdout).to_string();
+    assert!(stdout.starts_with("$ echo linting"), "stdout: {stdout}");
+}
+
+/// Task names are padded by character count, and durations right-align so
+/// they can be compared down the column.
+#[test]
+fn summary_columns_line_up() {
+    let (_dir, path) = with_temp_kdl(
+        r#"
+        x "echo x"
+        a-considerably-longer-name "echo y"
+        skipped {
+            status "true"
+            run "echo never"
+        }
+        all { deps "x" "a-considerably-longer-name" "skipped" }
+        "#,
+    );
+
+    let stderr =
+        String::from_utf8_lossy(&run_file(&path, &["--summary", "all"]).stderr).to_string();
+    // Table rows only: the up-to-date notice printed during the run has
+    // the same words but is not part of the table.
+    let rows: Vec<&str> = stderr
+        .lines()
+        .filter(|l| l.starts_with("  ✓ ") || l.starts_with("  ✗ ") || l.starts_with("  - "))
+        .collect();
+    assert!(rows.len() >= 3, "stderr: {stderr}");
+
+    // Every row ends its note at the same column.
+    let widths: Vec<usize> = rows.iter().map(|l| l.chars().count()).collect();
+    assert!(
+        widths.windows(2).all(|w| w[0] == w[1]),
+        "ragged rows {widths:?}: {stderr}"
+    );
 }

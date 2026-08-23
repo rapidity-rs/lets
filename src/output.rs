@@ -45,8 +45,10 @@ fn colorize(label: &str, color_seq: usize) -> String {
 
 /// Where a task's process output goes.
 pub enum TaskSink {
-    /// Child inherits the parent's stdio.
-    Inherit,
+    /// Child inherits the parent's stdio. `label` tags lets' own lines (a
+    /// command echo) when several tasks share the terminal; the root task
+    /// has none, since there is nothing to tell it apart from.
+    Inherit { label: Option<String> },
     /// Merged stdout+stderr streamed line-by-line with a label prefix.
     Prefix { prefix: String },
     /// Merged stdout+stderr collected and flushed as one block when the task
@@ -74,7 +76,11 @@ impl TaskSink {
             };
         }
         match mode {
-            OutputMode::Interleaved => TaskSink::Inherit,
+            // Interleaved tasks share one unlabelled stream, so an echoed
+            // command needs to say which task it belongs to.
+            OutputMode::Interleaved => TaskSink::Inherit {
+                label: Some(colorize(label, color_seq)),
+            },
             OutputMode::Group => TaskSink::Buffer {
                 header: Some(format!("[{}]", colorize(label, color_seq))),
                 label: Some(label.to_string()),
@@ -98,7 +104,7 @@ impl TaskSink {
                 buf: Mutex::new(Vec::new()),
             }
         } else {
-            TaskSink::Inherit
+            TaskSink::Inherit { label: None }
         }
     }
 
@@ -106,7 +112,10 @@ impl TaskSink {
     /// so it lands inside the task's block or prefix like process output.
     pub fn emit(&self, line: &str) {
         match self {
-            TaskSink::Inherit => println!("{line}"),
+            TaskSink::Inherit { label } => match label {
+                Some(label) => println!("[{label}] {line}"),
+                None => println!("{line}"),
+            },
             TaskSink::Prefix { prefix } => {
                 let mut out = std::io::stdout().lock();
                 let _ = out.write_all(prefix.as_bytes());
@@ -123,13 +132,13 @@ impl TaskSink {
 
     /// Whether child processes need their stdio piped through this sink.
     pub fn captures(&self) -> bool {
-        !matches!(self, TaskSink::Inherit)
+        !matches!(self, TaskSink::Inherit { .. })
     }
 
     /// Drain a merged stdout+stderr pipe until EOF.
     pub fn consume(&self, reader: PipeReader) {
         match self {
-            TaskSink::Inherit => {}
+            TaskSink::Inherit { .. } => {}
             TaskSink::Prefix { prefix } => {
                 let mut reader = BufReader::new(reader);
                 let mut line = Vec::new();

@@ -214,7 +214,9 @@ fn dry_run_previews_without_recording() {
     let output = run_build(root, &path, &["--dry-run"]);
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("[dry-run] fingerprint:"), "{stdout}");
+    // The plan names the sources check as a phase of the task.
+    assert!(stdout.contains("sources"), "{stdout}");
+    assert!(stdout.contains("pattern(s)"), "{stdout}");
     assert!(!root.join(".lets").exists(), "dry-run must not write cache");
 
     // A real run afterwards is not fooled by the dry run.

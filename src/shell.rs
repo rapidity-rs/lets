@@ -188,9 +188,14 @@ pub(crate) fn resolve_var(
     }
 }
 
-pub(crate) fn exec_shell(command: &str, ctx: &ExecContext, sink: &TaskSink) -> Result<()> {
+pub(crate) fn exec_shell(
+    command: &str,
+    phase: crate::plan::Phase,
+    ctx: &ExecContext,
+    sink: &TaskSink,
+) -> Result<()> {
     if ctx.dry_run {
-        println!("[dry-run] {command}");
+        crate::plan::step(&ctx.label, phase, command);
         return Ok(());
     }
 

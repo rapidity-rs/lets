@@ -596,5 +596,5 @@ fn a_trailing_built_in_flag_takes_effect() {
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("total:"), "stderr: {stderr}");
+    assert!(stderr.contains("elapsed"), "stderr: {stderr}");
 }

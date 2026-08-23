@@ -28,6 +28,7 @@ mod fingerprint;
 mod interpolate;
 mod output;
 mod parse;
+mod plan;
 mod shell;
 mod style;
 mod tree;

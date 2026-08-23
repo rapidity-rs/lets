@@ -187,9 +187,16 @@ fn dry_run_previews_gates_without_evaluating() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("[dry-run] precondition:"), "{stdout}");
-    assert!(stdout.contains("[dry-run] status:"), "{stdout}");
-    assert!(stdout.contains("[dry-run] echo BUILT"), "{stdout}");
+    // Gates are narrated as phases of the task, in the order they gate it.
+    let at = |needle: &str| {
+        stdout
+            .find(needle)
+            .unwrap_or_else(|| panic!("missing {needle:?}: {stdout}"))
+    };
+    assert!(
+        at("precondition ") < at("status  ") && at("status  ") < at("run          echo BUILT"),
+        "{stdout}"
+    );
     // The gate commands themselves must not have executed.
     assert!(!dir.path().join("pre-probe").exists());
     assert!(!dir.path().join("status-probe").exists());
