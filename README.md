@@ -560,6 +560,7 @@ redirected — piping the listing keeps every character.
 | `lets --verbose <cmd>` | Echo each command before it runs |
 | `lets --keep-going <cmd>` | Keep running independent tasks after a failure, report all failures |
 | `lets --summary <cmd>` | Per-task status and timing table after the run |
+| `lets --jobs <n> <cmd>` | Cap how many tasks run concurrently |
 | `lets --color <when>` | Force color on or off (`auto`, `always`, `never`) |
 | `lets self init` | Generate a starter lets.kdl |
 | `lets self check` | Validate your lets.kdl and print the parsed tree |
