@@ -149,6 +149,10 @@ pub const DIM: Style = Style::new().dimmed();
 /// A command or task name.
 pub const NAME: Style = AnsiColor::Cyan.on_default().bold();
 
+/// A command group: something that holds subcommands but can't be run on
+/// its own. Distinct from [`NAME`] so runnable commands stand out.
+pub const GROUP: Style = Style::new().bold();
+
 /// A section heading, matching clap's own.
 pub const HEADING: Style = AnsiColor::Green.on_default().bold();
 

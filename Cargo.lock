@@ -535,6 +535,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "terminal_size",
  "thiserror",
  "walkdir",
 ]

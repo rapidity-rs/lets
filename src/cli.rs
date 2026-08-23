@@ -46,6 +46,9 @@ fn leak(s: &str) -> &'static str {
 pub fn build_self_command() -> Command {
     Command::new("self")
         .about("Manage lets itself")
+        // Last, after the project's own tasks: it belongs to lets, not to
+        // the config the user is reading about.
+        .display_order(999)
         .styles(STYLES)
         .disable_help_subcommand(true)
         .subcommand_required(true)
@@ -193,8 +196,18 @@ pub fn build_cli(tree: &CommandTree) -> Command {
     }
 
     let commands = maybe_sorted(tree.commands.iter(), tree.config.sorted);
+    let nested = commands.iter().any(|c| c.has_children());
     for cmd in commands {
         app = app.subcommand(build_subcommand(cmd, tree.config.sorted));
+    }
+
+    // Root help lists top-level commands only, so a config with groups
+    // needs to say where the rest are.
+    if nested {
+        app = app.after_help(style::render(
+            style::DIM,
+            "Run `lets --list` to see every command, subcommands included.",
+        ));
     }
 
     app
