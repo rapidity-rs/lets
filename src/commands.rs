@@ -156,7 +156,7 @@ fn notes(node: &tree::CommandNode, show_hidden: bool) -> Vec<String> {
 /// What the command takes on the command line. Args only: they are what
 /// you must supply to run it, where flags are optional by nature and
 /// `lets <cmd> --help` is one keystroke away.
-fn signature(node: &tree::CommandNode) -> String {
+pub(crate) fn signature(node: &tree::CommandNode) -> String {
     node.args
         .iter()
         .map(|arg| {

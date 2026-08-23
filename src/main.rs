@@ -28,6 +28,7 @@ mod fingerprint;
 mod interpolate;
 mod output;
 mod parse;
+mod picker;
 mod plan;
 mod shell;
 mod style;
@@ -35,7 +36,6 @@ mod tree;
 mod validate;
 mod watch;
 
-use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process;
 
@@ -199,18 +199,22 @@ fn run() -> error::Result<()> {
     let project_root = std::path::absolute(&project_root).unwrap_or(project_root);
 
     if matches.subcommand().is_none() {
-        // On a terminal, offer a fuzzy picker over runnable commands;
-        // elsewhere (pipes, CI) keep printing help.
-        if config_found
-            && std::io::stdin().is_terminal()
-            && std::io::stdout().is_terminal()
-            && let Some(path) = pick_command(&tree)?
-        {
-            let argv = std::env::args().skip(1).chain(path);
-            let matches = clap_cmd
-                .clone()
-                .get_matches_from(std::iter::once("lets".to_string()).chain(argv));
-            return exec::run(&tree, &matches, &project_root);
+        // On a terminal, offer a picker over runnable commands; elsewhere
+        // (pipes, CI) keep printing help.
+        if config_found && picker::available() {
+            match picker::pick(&tree) {
+                picker::Outcome::Run(path) => {
+                    let argv = std::env::args().skip(1).chain(path);
+                    let matches = clap_cmd
+                        .clone()
+                        .get_matches_from(std::iter::once("lets".to_string()).chain(argv));
+                    return exec::run(&tree, &matches, &project_root);
+                }
+                // Backing out of the picker is an answer, not a request for
+                // help: return to the prompt rather than a wall of text.
+                picker::Outcome::Cancelled => return Ok(()),
+                picker::Outcome::Nothing => {}
+            }
         }
         clap_cmd.print_help().ok();
         println!();
@@ -229,51 +233,6 @@ fn run() -> error::Result<()> {
     }
 
     exec::run(&tree, &matches, &project_root)
-}
-
-/// Fuzzy-pick a runnable command; None when the user cancels (Esc) or
-/// nothing is runnable. Returns the command path to invoke.
-fn pick_command(tree: &tree::CommandTree) -> error::Result<Option<Vec<String>>> {
-    fn collect(
-        commands: &[tree::CommandNode],
-        prefix: &[String],
-        out: &mut Vec<(Vec<String>, Option<String>)>,
-    ) {
-        for cmd in commands {
-            if cmd.hide {
-                continue;
-            }
-            let mut path = prefix.to_vec();
-            path.push(cmd.name.clone());
-            if cmd.is_runnable() {
-                out.push((path.clone(), cmd.description.clone()));
-            }
-            collect(&cmd.children, &path, out);
-        }
-    }
-
-    let mut items = Vec::new();
-    collect(&tree.commands, &[], &mut items);
-    if items.is_empty() {
-        return Ok(None);
-    }
-
-    let labels: Vec<String> = items
-        .iter()
-        .map(|(path, desc)| match desc {
-            Some(desc) => format!("{}  {}", path.join(" "), style::out(style::DIM, desc)),
-            None => path.join(" "),
-        })
-        .collect();
-
-    let picked = dialoguer::FuzzySelect::new()
-        .with_prompt("Run")
-        .items(&labels)
-        .default(0)
-        .interact_opt()
-        .map_err(|e| error::Error::Other(format!("picker failed: {e}")))?;
-
-    Ok(picked.map(|i| items[i].0.clone()))
 }
 
 /// Handle `lets self <subcommand>` after config is loaded.

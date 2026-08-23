@@ -15,9 +15,13 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4.6", features = ["color", "suggestions", "env"] }
 clap_complete = { version = "4.6.0", features = ["unstable-dynamic"] }
+console = "0.16.3"
 ctrlc = { version = "3.5.2", features = ["termination"] }
-dialoguer = { version = "0.12.0", features = ["fuzzy-select"] }
+# Confirm/Input/Select for `confirm`, `prompt`, and `choose`. The command
+# picker has its own render loop (see src/picker.rs).
+dialoguer = { version = "0.12.0", default-features = false }
 dotenvy = "0.15"
+fuzzy-matcher = "0.3.7"
 globset = "0.4.19"
 kdl = { version = "6", features = ["span"] }
 miette = { version = "7.6.0", features = ["fancy"] }
