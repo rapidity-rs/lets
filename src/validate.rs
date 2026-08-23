@@ -238,11 +238,10 @@ fn validate_placeholders(commands: &[CommandNode], ctx: &SourceCtx) -> Result<()
         }
         for (key, value) in &cmd.env.vars {
             check_template(cmd, value, TemplateKind::EnvValue, ctx).map_err(|e| match e {
-                Error::Parse { message, src, span } => Error::Parse {
-                    message: format!("in env value '{key}': {message}"),
-                    src,
-                    span,
-                },
+                Error::Parse(mut d) => {
+                    d.message = format!("in env value '{key}': {}", d.message);
+                    Error::Parse(d)
+                }
                 other => other,
             })?;
         }

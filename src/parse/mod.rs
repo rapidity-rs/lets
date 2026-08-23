@@ -40,11 +40,11 @@ pub(crate) struct SourceCtx {
 
 impl SourceCtx {
     pub(crate) fn error(&self, message: impl Into<String>, span: miette::SourceSpan) -> Error {
-        Error::Parse {
-            message: message.into(),
-            src: miette::NamedSource::new(self.name.clone(), self.source.clone()),
+        Error::Parse(Box::new(crate::error::SourceDiagnostic::new(
+            message.into(),
+            miette::NamedSource::new(self.name.clone(), self.source.clone()),
             span,
-        }
+        )))
     }
 
     /// Lift a `kdl` parse failure into our own diagnostic.
@@ -57,12 +57,12 @@ impl SourceCtx {
     fn syntax_error(&self, err: &kdl::KdlError) -> Error {
         let src = miette::NamedSource::new(self.name.clone(), self.source.clone());
         let Some(first) = err.diagnostics.first() else {
-            return Error::Syntax {
+            return Error::Parse(Box::new(crate::error::SourceDiagnostic {
                 message: "invalid KDL syntax".to_string(),
                 src,
                 labels: Vec::new(),
                 help: None,
-            };
+            }));
         };
 
         let labels = err
@@ -74,7 +74,7 @@ impl SourceCtx {
             })
             .collect();
 
-        Error::Syntax {
+        Error::Parse(Box::new(crate::error::SourceDiagnostic {
             message: first
                 .message
                 .clone()
@@ -82,7 +82,7 @@ impl SourceCtx {
             src,
             labels,
             help: first.help.clone(),
-        }
+        }))
     }
 }
 

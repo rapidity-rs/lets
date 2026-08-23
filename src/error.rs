@@ -13,35 +13,16 @@ pub enum Error {
     #[error("no lets.kdl found (searched from {start_dir} to filesystem root)")]
     ConfigNotFound { start_dir: PathBuf },
 
-    #[error("{message}")]
-    #[diagnostic()]
-    Parse {
-        message: String,
-        #[source_code]
-        src: miette::NamedSource<String>,
-        #[label("{message}")]
-        span: SourceSpan,
-    },
+    /// A config-file problem with source to point at. Boxed because it
+    /// carries the file's text, and every `Result` in the crate would
+    /// otherwise pay for it.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Parse(Box<SourceDiagnostic>),
 
     #[error("{message}")]
     #[diagnostic()]
     ParseNoSpan { message: String },
-
-    /// A KDL grammar violation, re-anchored on our own named source so the
-    /// snippet carries the config's filename. `kdl` reports these as
-    /// sub-diagnostics whose `Display` is a constant string, so the message,
-    /// labels, and fix hint have to be lifted out by hand.
-    #[error("{message}")]
-    #[diagnostic()]
-    Syntax {
-        message: String,
-        #[source_code]
-        src: miette::NamedSource<String>,
-        #[label(collection)]
-        labels: Vec<miette::LabeledSpan>,
-        #[help]
-        help: Option<String>,
-    },
 
     #[error("failed to read {path}: {source}")]
     ReadFile {
@@ -113,6 +94,38 @@ impl Error {
                 | Error::DependencyFailed { .. }
                 | Error::TasksFailed { .. }
         )
+    }
+}
+
+/// A diagnostic anchored in the config file: a message, the source to
+/// render a snippet from, the spans to mark, and an optional fix hint.
+///
+/// Covers both our own errors and grammar violations lifted out of `kdl`,
+/// whose sub-diagnostics carry exactly this shape.
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
+#[error("{message}")]
+pub struct SourceDiagnostic {
+    pub message: String,
+    #[source_code]
+    pub src: miette::NamedSource<String>,
+    #[label(collection)]
+    pub labels: Vec<miette::LabeledSpan>,
+    #[help]
+    pub help: Option<String>,
+}
+
+impl SourceDiagnostic {
+    /// A single span labelled with the message itself.
+    pub fn new(message: String, src: miette::NamedSource<String>, span: SourceSpan) -> Self {
+        SourceDiagnostic {
+            labels: vec![miette::LabeledSpan::new_with_span(
+                Some(message.clone()),
+                span,
+            )],
+            message,
+            src,
+            help: None,
+        }
     }
 }
 
