@@ -499,6 +499,32 @@ Add help text to one-liners without block syntax:
 build "cargo build" description="Build the project"
 ```
 
+### Picking a command
+
+Run `lets` with no arguments on a terminal and it opens a picker over every
+runnable command:
+
+```
+  Run a command                                 12 available
+────────────────────────────────────────────────────────────
+❯ build    Build the project (b)
+  test     Run the test suite (t)
+  doc ›
+    api    Build rustdoc API documentation
+    serve  Preview documentation site locally
+  ci       Full CI pipeline
+────────────────────────────────────────────────────────────
+  ↑↓ move   ⏎ run   esc cancel   type to filter
+```
+
+Start typing to filter — names, aliases, and arguments are matched first,
+descriptions second, so `dep` finds `deploy` before any task that merely
+mentions deploying. Searching flattens the tree, so nested commands show
+their full path. `⏎` runs the highlighted command; `esc` returns you to the
+prompt.
+
+Off a terminal — in a pipe, or in CI — `lets` prints help instead.
+
 ### Listing commands
 
 `lets --list` shows the whole tree — including subcommands, which root help
@@ -527,7 +553,7 @@ redirected — piping the listing keeps every character.
 | Command | Description |
 |---|---|
 | `lets --help` | Show help with all commands |
-| `lets` | With no arguments on a terminal: fuzzy-pick a command to run |
+| `lets` | With no arguments on a terminal: pick a command to run |
 | `lets --list` | Show every command as a tree, with signatures and aliases |
 | `lets --list --json` | Machine-readable command tree for tooling |
 | `lets --dry-run <cmd>` | Show what would run |

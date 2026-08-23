@@ -52,8 +52,8 @@ lets --list
 # Run a command
 lets build
 
-# Or just type `lets` — on a terminal it opens a fuzzy picker
-# over your commands (Esc shows help instead)
+# Or just type `lets` — on a terminal it opens a picker over your
+# commands: type to filter, ⏎ to run, esc to back out
 lets
 
 # Get help for a specific command
