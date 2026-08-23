@@ -47,6 +47,22 @@ impl SourceCtx {
         )))
     }
 
+    /// Like [`SourceCtx::error`], but marks the span with a short phrase
+    /// instead of repeating the whole message under the snippet.
+    pub(crate) fn error_labeled(
+        &self,
+        message: impl Into<String>,
+        label: impl Into<String>,
+        span: miette::SourceSpan,
+    ) -> Error {
+        Error::Parse(Box::new(crate::error::SourceDiagnostic {
+            message: message.into(),
+            src: miette::NamedSource::new(self.name.clone(), self.source.clone()),
+            labels: vec![miette::LabeledSpan::new_with_span(Some(label.into()), span)],
+            help: None,
+        }))
+    }
+
     /// Lift a `kdl` parse failure into our own diagnostic.
     ///
     /// `KdlError`'s `Display` is the constant "Failed to parse KDL document";

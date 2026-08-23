@@ -20,7 +20,7 @@ pub fn validate(tree: &CommandTree, ctx: &SourceCtx) -> Result<()> {
     validate_inputs(&tree.commands, ctx)?;
     validate_config_env(tree)?;
     validate_refs(tree, &tree.commands, ctx)?;
-    validate_no_cycles(tree, &tree.commands)?;
+    validate_no_cycles(tree, &tree.commands, ctx)?;
     validate_sources(&tree.commands, ctx)?;
     validate_placeholders(&tree.commands, ctx)?;
     Ok(())
@@ -426,59 +426,91 @@ fn clap_error_summary(err: &clap::Error) -> String {
     parts.join(" ")
 }
 
-fn validate_no_cycles(tree: &CommandTree, commands: &[CommandNode]) -> Result<()> {
+fn validate_no_cycles(tree: &CommandTree, commands: &[CommandNode], ctx: &SourceCtx) -> Result<()> {
     let mut visiting = HashSet::new();
     let mut visited = HashSet::new();
+    let mut stack = Vec::new();
 
     for cmd in commands {
         detect_cycle(
             tree,
             cmd,
             std::slice::from_ref(&cmd.name),
+            &mut stack,
             &mut visiting,
             &mut visited,
+            ctx,
         )?;
     }
     Ok(())
 }
 
+/// Depth-first search over dependency edges. `stack` is the chain of tasks
+/// currently being followed, so a cycle can be reported as the route that
+/// forms it rather than as a single name.
 fn detect_cycle(
     tree: &CommandTree,
     node: &CommandNode,
-    node_path: &[String],
+    key: &[String],
+    stack: &mut Vec<Vec<String>>,
     visiting: &mut HashSet<Vec<String>>,
     visited: &mut HashSet<Vec<String>>,
+    ctx: &SourceCtx,
 ) -> Result<()> {
-    let key = node_path.to_vec();
-
-    if visited.contains(&key) {
+    let owned = key.to_vec();
+    if visited.contains(&owned) {
         return Ok(());
     }
-    if !visiting.insert(key.clone()) {
-        return Err(Error::CycleDetected {
-            cycle: node_path.join(" → "),
-        });
-    }
+    visiting.insert(owned.clone());
+    stack.push(owned.clone());
 
-    for refs in [&node.orch.deps, &node.orch.steps] {
-        for task_ref in refs {
-            if let Some((target, args)) = tree.resolve_ref(task_ref) {
-                let path = &task_ref.tokens[..task_ref.tokens.len() - args.len()];
-                detect_cycle(tree, target, path, visiting, visited)?;
+    for task_ref in node.orch.deps.iter().chain(&node.orch.steps) {
+        if let Some((target, args)) = tree.resolve_ref(task_ref) {
+            let path = task_ref.tokens[..task_ref.tokens.len() - args.len()].to_vec();
+            // Catch the cycle on the edge that closes it: that edge's span
+            // is the line the user has to change.
+            if visiting.contains(&path) {
+                return Err(cycle_error(stack, &path, task_ref.span, ctx));
             }
+            detect_cycle(tree, target, &path, stack, visiting, visited, ctx)?;
         }
     }
 
-    // Also recurse into child commands to check their deps/steps.
-    for child in &node.children {
-        let mut child_path = node_path.to_vec();
-        child_path.push(child.name.clone());
-        detect_cycle(tree, child, &child_path, visiting, visited)?;
-    }
+    stack.pop();
+    visiting.remove(&owned);
+    visited.insert(owned);
 
-    visiting.remove(&key);
-    visited.insert(key);
+    // Subcommands are tasks in their own right, not steps of their parent,
+    // so they are searched outside the parent's dependency chain.
+    for child in &node.children {
+        let mut child_key = key.to_vec();
+        child_key.push(child.name.clone());
+        detect_cycle(tree, child, &child_key, stack, visiting, visited, ctx)?;
+    }
     Ok(())
+}
+
+/// Render the cycle as the route around it: `a → b → a`.
+fn cycle_error(
+    stack: &[Vec<String>],
+    target: &[String],
+    span: miette::SourceSpan,
+    ctx: &SourceCtx,
+) -> Error {
+    let start = stack
+        .iter()
+        .position(|key| key.as_slice() == target)
+        .unwrap_or(0);
+    let route: Vec<String> = stack[start..]
+        .iter()
+        .chain(std::iter::once(&target.to_vec()))
+        .map(|key| key.join(" "))
+        .collect();
+    ctx.error_labeled(
+        format!("dependency cycle: {}", route.join(" → ")),
+        "closes the cycle",
+        span,
+    )
 }
 
 #[cfg(test)]
@@ -569,7 +601,7 @@ mod tests {
             }
             "#,
         );
-        assert!(err.contains("cycle"), "got: {err}");
+        assert!(err.contains("a → b → a"), "got: {err}");
     }
 
     #[test]
@@ -582,7 +614,7 @@ mod tests {
             }
             "#,
         );
-        assert!(err.contains("cycle"), "got: {err}");
+        assert!(err.contains("a → a"), "got: {err}");
     }
 
     #[test]
@@ -603,7 +635,40 @@ mod tests {
             }
             "#,
         );
-        assert!(err.contains("cycle"), "got: {err}");
+        // The whole route, not just the task the search happened to reach.
+        assert!(err.contains("a → b → c → a"), "got: {err}");
+    }
+
+    #[test]
+    fn nested_command_cycle_names_full_paths() {
+        let err = parse_err(
+            r#"
+            db {
+                migrate { deps "db reset" }
+                reset { deps "db migrate" }
+            }
+            "#,
+        );
+        assert!(
+            err.contains("db migrate → db reset → db migrate"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn sibling_subcommands_are_not_a_cycle() {
+        // Containment is not a dependency edge: a group's children sharing
+        // a parent must not read as a route back to it.
+        let tree = parse(
+            r#"
+            db {
+                migrate "echo m"
+                reset "echo r"
+            }
+            all { deps "db migrate" "db reset" }
+            "#,
+        );
+        assert_eq!(tree.commands.len(), 2);
     }
 
     #[test]

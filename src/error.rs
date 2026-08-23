@@ -31,9 +31,6 @@ pub enum Error {
         source: std::io::Error,
     },
 
-    #[error("dependency cycle detected: {cycle}")]
-    CycleDetected { cycle: String },
-
     #[error("task '{task}' failed with exit code {code}")]
     #[diagnostic(help("while running `{command}`"))]
     CommandFailed {
