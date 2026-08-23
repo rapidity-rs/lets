@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## [v0.5.0](https://github.com/rapidity-rs/lets/compare/7613dd0fff8baf262f0385b11e5f8022dadccb07..v0.5.0) - 2026-08-23
+#### Features
+- (**errors**) point diagnostics at the line that caused them - ([e77fae1](https://github.com/rapidity-rs/lets/commit/e77fae1415f6f961467861d22b27c75ed5ec3dd8)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+- (**list**) show signatures and aliases, aligned to a column - ([26ec278](https://github.com/rapidity-rs/lets/commit/26ec278a6db312f7c1cb8f96752290dc7ffb08fc)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+- (**output**) make dry-run a plan, label echoes, tidy the summary - ([5e68f8d](https://github.com/rapidity-rs/lets/commit/5e68f8d1cac551aad04597f3f1d652908cfabed2)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+- (**picker**) replace the fuzzy prompt with our own render loop - ([967d981](https://github.com/rapidity-rs/lets/commit/967d98193aa6cce2b325de7a5a45adbc64d18228)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+- (**style**) decide color once, honor NO_COLOR and --color - ([73a47a6](https://github.com/rapidity-rs/lets/commit/73a47a667a6514a6af3902ac43c0a3058d05c4d4)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+#### Bug Fixes
+- (**cli**) group built-in flags and accept them after the command - ([46f4e2e](https://github.com/rapidity-rs/lets/commit/46f4e2ea350c1f23729c1c4aaaa82191a630120f)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+- (**errors**) explain prompts that have no terminal to ask on - ([98160dd](https://github.com/rapidity-rs/lets/commit/98160dd8e837996c92a77058c0443d98fd51bf6c)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+- (**errors**) report the route a dependency cycle takes - ([07884ef](https://github.com/rapidity-rs/lets/commit/07884ef5be2bb6fee2095a852c12eca0d201e719)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+- (**errors**) report a missing lets.kdl instead of an unknown subcommand - ([34084a4](https://github.com/rapidity-rs/lets/commit/34084a4fab866f33d806ffdebc04c3531d5e9648)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+- (**errors**) restore location and hints for KDL syntax errors - ([f534d1b](https://github.com/rapidity-rs/lets/commit/f534d1bdc3687d19a9b195f786241acfe0a132cc)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+- (**errors**) report which task failed and what never ran - ([8ecff39](https://github.com/rapidity-rs/lets/commit/8ecff39103302579c8dadbecb74dd3ccb3a1cc26)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+#### Documentation
+- (**list**) describe signatures, grouping, and width behavior - ([aca1041](https://github.com/rapidity-rs/lets/commit/aca104188e9a188f1431ab1e8eebbcae33e8f272)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+- (**output**) update dry-run, summary, and verbose examples - ([edb9713](https://github.com/rapidity-rs/lets/commit/edb9713d805824728ad03fcded0a3e8a1c5217ce)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+- (**picker**) describe the picker, its matching, and esc - ([761897b](https://github.com/rapidity-rs/lets/commit/761897b5bc77c4f5bc1da87e317b0790582cc12d)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+- (**style**) document color precedence and reserve --color - ([b2a39c4](https://github.com/rapidity-rs/lets/commit/b2a39c45e4ffa575eb98c6a8b239d5928e6acee0)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+- ![BREAKING](https://img.shields.io/badge/BREAKING-red) (**upgrading**) note the 0.4 to 0.5 breaking changes - ([a34cb05](https://github.com/rapidity-rs/lets/commit/a34cb05cf85b1c6ad83440413ef3a0c54910e44c)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+- list --jobs among the built-in flags - ([9455ece](https://github.com/rapidity-rs/lets/commit/9455ece648d09240c9f79d12d65b143db77609ae)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+- correct the listing and picker examples - ([c532aa3](https://github.com/rapidity-rs/lets/commit/c532aa34bc006aae7d02951baa66db6244c7555d)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+#### Continuous Integration
+- (**release**) recognize cargo's 'already exists' publish message - ([7613dd0](https://github.com/rapidity-rs/lets/commit/7613dd0fff8baf262f0385b11e5f8022dadccb07)) - [@taylorFaucett](https://github.com/taylorFaucett)
+#### Refactoring
+- (**errors**) unify config diagnostics behind one boxed payload - ([06b9807](https://github.com/rapidity-rs/lets/commit/06b9807b7f4a91efbeae0317db79cdb1f026d1cd)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+- split listing from self-commands, share text measurement - ([ff2aa01](https://github.com/rapidity-rs/lets/commit/ff2aa01d15f3bdd4e18b4782abdfc9e35f901bfa)) - [@taylorFaucett](https://github.com/taylorFaucett), Claude Opus 5 (1M context)
+
+- - -
+
 ## [v0.4.0](https://github.com/rapidity-rs/lets/compare/125a37e33523203e1091b1280cd6b9dd1aa66944..v0.4.0) - 2026-07-20
 #### Features
 - (**cli**) JSON listing, bare-invocation picker, and min-version gate - ([82b9f14](https://github.com/rapidity-rs/lets/commit/82b9f14ffbb7b11d7b8edf1d82f9c03a749f20ce)) - [@taylorFaucett](https://github.com/taylorFaucett)
