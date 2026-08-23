@@ -312,7 +312,10 @@ fn is_up_to_date(status: &[String], ctx: &ExecContext, dry_run: bool, force: boo
 
 /// Dim stderr notice for a skipped task (never mixed into task output).
 fn report_up_to_date(label: &str) {
-    eprintln!("\x1b[2m'{label}' is up to date\x1b[0m");
+    eprintln!(
+        "{}",
+        crate::style::err(crate::style::DIM, format!("'{label}' is up to date"))
+    );
 }
 
 /// Shared state for one invocation's task graph execution.
@@ -631,9 +634,18 @@ impl Orchestrator<'_> {
         eprintln!();
         for row in rows.iter() {
             let (mark, note) = match row.outcome {
-                Outcome::Success => ("\x1b[32m✓\x1b[0m", format_duration(row.duration)),
-                Outcome::Failed => ("\x1b[31m✗\x1b[0m", format_duration(row.duration)),
-                Outcome::UpToDate => ("\x1b[2m-\x1b[0m", "up to date".to_string()),
+                Outcome::Success => (
+                    crate::style::err(crate::style::SUCCESS, "✓"),
+                    format_duration(row.duration),
+                ),
+                Outcome::Failed => (
+                    crate::style::err(crate::style::FAILURE, "✗"),
+                    format_duration(row.duration),
+                ),
+                Outcome::UpToDate => (
+                    crate::style::err(crate::style::DIM, "-"),
+                    "up to date".to_string(),
+                ),
             };
             eprintln!("  {mark} {label:<width$}  {note}", label = row.label);
         }

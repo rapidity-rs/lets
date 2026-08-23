@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use crate::error;
+use crate::style::{self, DIM, NAME};
 use crate::tree;
 
 /// Count total commands (including nested children) in a tree.
@@ -47,14 +48,15 @@ fn print_tree_node(
     let mut suffix = node
         .description
         .as_deref()
-        .map(|d| format!(" \x1b[2m{d}\x1b[0m"))
+        .map(|d| format!(" {}", style::out(DIM, d)))
         .unwrap_or_default();
     if node.hide {
-        suffix.push_str(" \x1b[2m(hidden)\x1b[0m");
+        suffix.push_str(&format!(" {}", style::out(DIM, "(hidden)")));
     }
     println!(
-        "\x1b[2m{prefix}{connector}\x1b[0m\x1b[1;36m{}\x1b[0m{suffix}",
-        node.name
+        "{}{}{suffix}",
+        style::out(DIM, format!("{prefix}{connector}")),
+        style::out(NAME, &node.name),
     );
 
     let children: Vec<_> = node

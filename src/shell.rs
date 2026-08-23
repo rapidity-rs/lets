@@ -10,7 +10,6 @@
 //! its own process group via `setpgid`, and timeouts kill the entire group
 //! via `killpg`.
 
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -197,11 +196,10 @@ pub(crate) fn exec_shell(command: &str, ctx: &ExecContext, sink: &TaskSink) -> R
 
     if ctx.echo {
         // Dim when a human is watching; plain in pipes and CI logs.
-        if std::io::stdout().is_terminal() {
-            sink.emit(&format!("\x1b[2m$ {command}\x1b[0m"));
-        } else {
-            sink.emit(&format!("$ {command}"));
-        }
+        sink.emit(&crate::style::out(
+            crate::style::DIM,
+            format!("$ {command}"),
+        ));
     }
 
     let attempts = ctx.retry_count.max(1);
@@ -229,6 +227,17 @@ fn exec_shell_once(command: &str, ctx: &ExecContext, sink: &TaskSink) -> Result<
     let shell = ctx.shell.as_deref().unwrap_or("sh");
     let mut cmd = process::Command::new(shell);
     cmd.arg("-c").arg(command);
+
+    // Grouped, prefixed, and silent tasks read the child through a pipe, so
+    // the child sees no terminal and turns its own colour off — even though
+    // the output is on its way to one. Ask it to keep colour, but only when
+    // lets' own stdout has it; NO_COLOR and --color=never already show up
+    // as a plain stdout here. Set before the task's env so a config can
+    // still override it.
+    if sink.captures() && crate::style::enabled(crate::style::Stream::Stdout) {
+        cmd.env("CLICOLOR_FORCE", "1");
+        cmd.env("FORCE_COLOR", "1");
+    }
 
     if !ctx.env.is_empty() {
         cmd.envs(ctx.env.iter().map(|(k, v)| (k, v)));

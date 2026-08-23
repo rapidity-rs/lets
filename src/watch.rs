@@ -291,5 +291,8 @@ fn graph_has_interaction(tree: &CommandTree, node: &CommandNode) -> bool {
 
 /// Print a dim status line to stderr (never mixed into task output).
 fn status(msg: &str) {
-    eprintln!("\x1b[2m[watch] {msg}\x1b[0m");
+    eprintln!(
+        "{}",
+        crate::style::err(crate::style::DIM, format!("[watch] {msg}"))
+    );
 }

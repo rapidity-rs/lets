@@ -5,7 +5,7 @@
 //! per-task consumer that shell execution writes through. New presentation
 //! backends (a TUI, terminal-multiplexer panes) only need a new sink variant.
 
-use std::io::{BufRead, BufReader, IsTerminal, PipeReader, Read, Write};
+use std::io::{BufRead, BufReader, PipeReader, Read, Write};
 use std::str::FromStr;
 
 use parking_lot::Mutex;
@@ -38,17 +38,9 @@ impl FromStr for OutputMode {
     }
 }
 
-/// ANSI color codes cycled across task labels in prefixed mode.
-const LABEL_COLORS: [u8; 6] = [36, 35, 32, 33, 34, 96];
-
-/// Colorize a task label when stdout is a terminal.
+/// Colorize a task label for stdout, where task output goes.
 fn colorize(label: &str, color_seq: usize) -> String {
-    if std::io::stdout().is_terminal() {
-        let color = LABEL_COLORS[color_seq % LABEL_COLORS.len()];
-        format!("\x1b[{color}m{label}\x1b[0m")
-    } else {
-        label.to_string()
-    }
+    crate::style::out(crate::style::label(color_seq), label)
 }
 
 /// Where a task's process output goes.

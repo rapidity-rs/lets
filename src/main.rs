@@ -29,6 +29,7 @@ mod interpolate;
 mod output;
 mod parse;
 mod shell;
+mod style;
 mod tree;
 mod validate;
 mod watch;
@@ -38,6 +39,8 @@ use std::path::PathBuf;
 use std::process;
 
 fn main() {
+    // Colour is resolved before anything can print, including diagnostics.
+    style::init(resolve_color_choice());
     install_diagnostic_handler();
     let result = run();
     if exec::interrupted() {
@@ -56,13 +59,34 @@ fn main() {
 /// Render aggregate failures as one nested tree rather than a run of
 /// separate `Error:` blocks, so several failed tasks read as one report.
 fn install_diagnostic_handler() {
-    let _ = miette::set_hook(Box::new(|_| {
+    let color = style::enabled(style::Stream::Stderr);
+    let _ = miette::set_hook(Box::new(move |_| {
         Box::new(
             miette::MietteHandlerOpts::new()
                 .show_related_errors_as_nested()
+                .color(color)
                 .build(),
         )
     }));
+}
+
+/// Read `--color` straight from argv. Diagnostics can fire while the config
+/// is still being loaded, long before clap has parsed anything, so the
+/// colour decision can't wait for `ArgMatches`. An invalid value is left
+/// alone here; clap reports it properly a moment later.
+fn resolve_color_choice() -> style::ColorChoice {
+    let args: Vec<String> = std::env::args().collect();
+    for (i, arg) in args.iter().enumerate() {
+        let value = if arg == "--color" {
+            args.get(i + 1).map(String::as_str)
+        } else {
+            arg.strip_prefix("--color=")
+        };
+        if let Some(value) = value {
+            return value.parse().unwrap_or_default();
+        }
+    }
+    style::ColorChoice::default()
 }
 
 fn run() -> error::Result<()> {
@@ -236,7 +260,7 @@ fn pick_command(tree: &tree::CommandTree) -> error::Result<Option<Vec<String>>> 
     let labels: Vec<String> = items
         .iter()
         .map(|(path, desc)| match desc {
-            Some(desc) => format!("{}  \x1b[2m{desc}\x1b[0m", path.join(" ")),
+            Some(desc) => format!("{}  {}", path.join(" "), style::out(style::DIM, desc)),
             None => path.join(" "),
         })
         .collect();

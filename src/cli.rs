@@ -11,14 +11,17 @@ use clap::Command;
 use clap::builder::styling::{AnsiColor, Styles};
 use clap_complete::Shell;
 
+use crate::style;
 use crate::tree::{ArgDef, CommandNode, CommandTree, FlagDef, FlagType};
 
+/// clap's own help and error styling, drawn from the shared palette so
+/// generated help matches everything lets prints itself.
 const STYLES: Styles = Styles::styled()
-    .header(AnsiColor::Green.on_default().bold())
-    .usage(AnsiColor::Green.on_default().bold())
-    .literal(AnsiColor::Cyan.on_default().bold())
+    .header(style::HEADING)
+    .usage(style::HEADING)
+    .literal(style::NAME)
     .placeholder(AnsiColor::Cyan.on_default())
-    .valid(AnsiColor::Green.on_default())
+    .valid(style::SUCCESS)
     .invalid(AnsiColor::Yellow.on_default())
     .error(AnsiColor::Red.on_default().bold());
 
@@ -77,6 +80,12 @@ pub fn build_cli(tree: &CommandTree) -> Command {
     let mut app = Command::new("lets")
         .version(env!("CARGO_PKG_VERSION"))
         .styles(STYLES)
+        // clap does its own per-stream detection under Auto, matching ours.
+        .color(match style::choice() {
+            style::ColorChoice::Auto => clap::ColorChoice::Auto,
+            style::ColorChoice::Always => clap::ColorChoice::Always,
+            style::ColorChoice::Never => clap::ColorChoice::Never,
+        })
         .arg(
             clap::Arg::new("file")
                 .long("file")
@@ -129,6 +138,16 @@ pub fn build_cli(tree: &CommandTree) -> Command {
                 .long("jobs")
                 .help("Maximum number of tasks running concurrently")
                 .value_parser(clap::value_parser!(u64).range(1..))
+                .global(true),
+        )
+        .arg(
+            clap::Arg::new("color")
+                .long("color")
+                .value_name("when")
+                .help("When to use colored output")
+                .value_parser(clap::builder::PossibleValuesParser::new([
+                    "auto", "always", "never",
+                ]))
                 .global(true),
         )
         .arg(
@@ -221,7 +240,12 @@ pub(crate) fn build_subcommand(node: &CommandNode, sorted: bool) -> Command {
         }
 
         if !suffixes.is_empty() {
-            about = format!("{about} \x1b[2m({})\x1b[0m", suffixes.join(", "));
+            // clap parses these escapes and re-renders them under its own
+            // colour setting, so they are emitted unconditionally.
+            about = format!(
+                "{about} {}",
+                style::render(style::DIM, format!("({})", suffixes.join(", ")))
+            );
         }
 
         cmd = cmd.about(leak(&about));
@@ -244,7 +268,7 @@ pub(crate) fn build_subcommand(node: &CommandNode, sorted: bool) -> Command {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        let formatted = format!("\x1b[1;32mExamples:\x1b[0m\n{indented}");
+        let formatted = format!("{}\n{indented}", style::render(style::HEADING, "Examples:"));
         cmd = cmd.after_help(leak(&formatted));
     }
 
