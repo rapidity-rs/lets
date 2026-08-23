@@ -59,16 +59,33 @@ The command's merged stdout and stderr are buffered. On success, nothing is prin
 
 ## Dry-run mode
 
-See what would execute without running it:
+See what would execute without running it. The plan groups commands under
+the task they belong to and names the phase each one runs in:
 
 ```
 $ lets --dry-run deploy staging
-[dry-run] echo Starting deploy...
-[dry-run] scripts/deploy.sh staging
-[dry-run] echo Deploy complete!
+lint
+  run          cargo clippy
+
+deploy
+  before       echo Starting deploy...
+  run          scripts/deploy.sh staging
+  after        echo Deploy complete!
 ```
 
-Dry-run applies to all commands, deps, steps, and hooks. It's a global flag: `lets --dry-run <command>`.
+Phases appear in execution order, which means a task can be announced more
+than once: its `precondition` gates the whole task and so is printed before
+its `deps` run, while the rest of its body follows them.
+
+The full order is `precondition`, then `deps` and `steps` as tasks in their
+own right, then `status` and `sources`, then `before`, `run`, `after`, and
+`defer`.
+
+Nothing executes — gate commands are printed rather than evaluated, and no
+fingerprint is recorded. `deps` are walked in declaration order instead of
+in parallel, so the same config always produces the same plan.
+
+It's a global flag: `lets --dry-run <command>`.
 
 ## Include files
 

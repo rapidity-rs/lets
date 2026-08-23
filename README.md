@@ -434,14 +434,23 @@ Completions are context-aware: they complete command names, argument choices, an
 
 ### Dry-run mode
 
-See what would execute without running it:
+See what would execute without running it. The plan groups commands under
+the task they belong to and names the phase each one runs in:
 
 ```
 $ lets --dry-run deploy staging
-[dry-run] echo Starting deploy...
-[dry-run] scripts/deploy.sh staging
-[dry-run] echo Deploy complete!
+lint
+  run          cargo clippy
+
+deploy
+  before       echo Starting deploy...
+  run          scripts/deploy.sh staging
+  after        echo Deploy complete!
 ```
+
+Gates (`precondition`, `status`) and `sources` checks appear as phases too,
+printed but never evaluated. `deps` are walked in declaration order rather
+than in parallel — a preview should read the same way twice.
 
 ### Hidden commands
 

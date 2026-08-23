@@ -265,10 +265,24 @@ lets --output group ci
 Two flags help with long multi-task runs:
 
 - `--summary` prints a per-task status and timing table after the run —
-  successes, failures, and up-to-date skips, plus total wall time.
+  successes, failures, and up-to-date skips:
+
+  ```
+    ✓ lint                        118ms
+    ✓ test                        1.4s
+    - bundle                 up to date
+    ✓ ci                           12ms
+    4 tasks in 1.5s elapsed
+  ```
+
+  The footer is wall clock, not the sum of the rows: with parallel `deps`
+  the run finishes sooner than its tasks add up to.
+
 - `--verbose` (or `config { echo }`) prints each command as a dimmed `$ cmd`
   line before it runs, routed through the task's sink so grouped and
-  prefixed output stay attributed correctly.
+  prefixed output stay attributed correctly. In the default interleaved
+  mode, where every task writes to the same unlabeled stream, echoes from
+  deps and steps are tagged `[task]`; the command you invoked is left bare.
 
 ## Full execution order
 
