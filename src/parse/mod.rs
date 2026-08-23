@@ -47,9 +47,41 @@ impl SourceCtx {
         }
     }
 
-    fn error_no_span(&self, message: impl Into<String>) -> Error {
-        Error::ParseNoSpan {
-            message: message.into(),
+    /// Lift a `kdl` parse failure into our own diagnostic.
+    ///
+    /// `KdlError`'s `Display` is the constant "Failed to parse KDL document";
+    /// everything useful lives in its sub-diagnostics, and its own source is
+    /// unnamed, so reporting it directly would lose both the message and the
+    /// `lets.kdl:3:5` location. The first sub-diagnostic becomes the headline
+    /// and any others are additional markers on the same snippet.
+    fn syntax_error(&self, err: &kdl::KdlError) -> Error {
+        let src = miette::NamedSource::new(self.name.clone(), self.source.clone());
+        let Some(first) = err.diagnostics.first() else {
+            return Error::Syntax {
+                message: "invalid KDL syntax".to_string(),
+                src,
+                labels: Vec::new(),
+                help: None,
+            };
+        };
+
+        let labels = err
+            .diagnostics
+            .iter()
+            .map(|d| {
+                let text = d.label.clone().or_else(|| d.message.clone());
+                miette::LabeledSpan::new_with_span(text, d.span)
+            })
+            .collect();
+
+        Error::Syntax {
+            message: first
+                .message
+                .clone()
+                .unwrap_or_else(|| "invalid KDL syntax".to_string()),
+            src,
+            labels,
+            help: first.help.clone(),
         }
     }
 }
@@ -69,10 +101,9 @@ pub(crate) fn parse_source(source: &str, path: &Path) -> Result<CommandTree> {
         source: source.to_string(),
     };
 
-    let doc: KdlDocument = source.parse().map_err(|e: kdl::KdlError| {
-        // KDL errors already contain span info in their Display output.
-        ctx.error_no_span(e.to_string())
-    })?;
+    let doc: KdlDocument = source
+        .parse()
+        .map_err(|e: kdl::KdlError| ctx.syntax_error(&e))?;
 
     // Version gate first: a config written for a newer lets may use syntax
     // this binary rejects, and "upgrade lets" beats a parse error.

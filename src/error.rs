@@ -27,6 +27,22 @@ pub enum Error {
     #[diagnostic()]
     ParseNoSpan { message: String },
 
+    /// A KDL grammar violation, re-anchored on our own named source so the
+    /// snippet carries the config's filename. `kdl` reports these as
+    /// sub-diagnostics whose `Display` is a constant string, so the message,
+    /// labels, and fix hint have to be lifted out by hand.
+    #[error("{message}")]
+    #[diagnostic()]
+    Syntax {
+        message: String,
+        #[source_code]
+        src: miette::NamedSource<String>,
+        #[label(collection)]
+        labels: Vec<miette::LabeledSpan>,
+        #[help]
+        help: Option<String>,
+    },
+
     #[error("failed to read {path}: {source}")]
     ReadFile {
         path: PathBuf,
