@@ -505,14 +505,14 @@ Run `lets` with no arguments on a terminal and it opens a picker over every
 runnable command:
 
 ```
-  Run a command                                 12 available
+  Run a command                                  5 available
 ────────────────────────────────────────────────────────────
-❯ build    Build the project (b)
+❯ build    Compile everything (b)
   test     Run the test suite (t)
   doc ›
-    api    Build rustdoc API documentation
-    serve  Preview documentation site locally
-  ci       Full CI pipeline
+    api    Build API docs
+    serve  Preview the docs site
+  ci       Full pipeline
 ────────────────────────────────────────────────────────────
   ↑↓ move   ⏎ run   esc cancel   type to filter
 ```
@@ -532,7 +532,7 @@ only summarizes — with each command's signature and aliases:
 
 ```
 $ lets --list
-Arguments & flags — typed, validated, interpolated
+My project tasks
 
 ├── deploy <dev|staging|prod>  Deploy to an environment
 ├── greet [name]               Say hello
